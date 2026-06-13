@@ -4,7 +4,7 @@ VENV         := $(BACKEND_DIR)/venv
 PYTHON       := python3
 
 ifeq ($(OS),Windows_NT)
-	CLEAN_CMD := cmd /c if exist $(FRONTEND_DIR)\node_modules rmdir /s /q $(FRONTEND_DIR)\node_modules ^& if exist $(FRONTEND_DIR)\.next rmdir /s /q $(FRONTEND_DIR)\.next ^& if exist $(VENV) rmdir /s /q $(VENV) ^& if exist $(BACKEND_DIR)\__pycache__ rmdir /s /q $(BACKEND_DIR)\__pycache__
+	CLEAN_CMD := powershell -NoProfile -Command "$$ErrorActionPreference='SilentlyContinue'; Remove-Item -LiteralPath '$(FRONTEND_DIR)/node_modules','$(FRONTEND_DIR)/.next','$(VENV)','$(BACKEND_DIR)/__pycache__' -Recurse -Force; exit 0"
 else
 	CLEAN_CMD := rm -rf $(FRONTEND_DIR)/node_modules $(FRONTEND_DIR)/.next $(VENV) $(BACKEND_DIR)/__pycache__
 endif

@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import {
   BookOpen,
   Folder,
@@ -8,9 +9,10 @@ import {
   MessageCircle,
   Settings,
   Trophy,
+  User,
   type LucideIcon,
 } from 'lucide-react'
-import { navItems } from '../mock-data'
+import { navItems } from '../nav-items'
 
 const ICONS: Record<string, LucideIcon> = {
   dashboard: LayoutDashboard,
@@ -19,6 +21,7 @@ const ICONS: Record<string, LucideIcon> = {
   projects: Folder,
   classes: BookOpen,
   achievements: Trophy,
+  profile: User,
   settings: Settings,
 }
 
@@ -53,8 +56,8 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile, activeIt
               const isActive = item.id === activeItem
               return (
                 <li key={item.id}>
-                  <a
-                    href="#"
+                  <Link
+                    href={item.href}
                     title={item.label}
                     className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition
                       ${isActive ? 'bg-primary-light text-primary' : 'text-text-muted hover:bg-slate-50 hover:text-text-primary'}
@@ -63,7 +66,7 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile, activeIt
                   >
                     <Icon className="h-5 w-5 flex-shrink-0" />
                     <span className={`${collapsed ? 'md:hidden' : ''}`}>{item.label}</span>
-                  </a>
+                  </Link>
                 </li>
               )
             })}

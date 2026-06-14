@@ -86,17 +86,3 @@ export const classModule = {
   href: 'https://classroom.google.com',
 }
 
-export type NavItem = {
-  id: string
-  label: string
-}
-
-export const navItems: NavItem[] = [
-  { id: 'dashboard', label: 'Dashboard' },
-  { id: 'notices', label: 'Notices' },
-  { id: 'chatroom', label: 'Chatroom' },
-  { id: 'projects', label: 'Projects' },
-  { id: 'classes', label: 'Classes' },
-  { id: 'achievements', label: 'Achievements' },
-  { id: 'settings', label: 'Settings' },
-]

@@ -49,8 +49,10 @@ export default async function DashboardPage() {
       firstName={firstName}
       email={user.email ?? ''}
       initials={initials}
+      avatarUrl={profile?.avatar_url}
       unreadNotifications={3}
       signOutButton={<SignOutButton />}
+      activeItem="dashboard"
     >
       <div className="space-y-6">
         {/* Row 1 */}

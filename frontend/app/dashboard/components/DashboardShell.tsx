@@ -9,8 +9,10 @@ type DashboardShellProps = {
   firstName: string
   email: string
   initials: string
+  avatarUrl?: string | null
   unreadNotifications: number
   signOutButton: ReactNode
+  activeItem?: string
   children: ReactNode
 }
 
@@ -18,8 +20,10 @@ export default function DashboardShell({
   firstName,
   email,
   initials,
+  avatarUrl,
   unreadNotifications,
   signOutButton,
+  activeItem = 'dashboard',
   children,
 }: DashboardShellProps) {
   const [collapsed, setCollapsed] = useState(false)
@@ -36,7 +40,7 @@ export default function DashboardShell({
         collapsed={collapsed}
         mobileOpen={mobileOpen}
         onCloseMobile={() => setMobileOpen(false)}
-        activeItem="dashboard"
+        activeItem={activeItem}
       />
 
       <div className="flex min-h-screen flex-1 flex-col">
@@ -44,6 +48,7 @@ export default function DashboardShell({
           firstName={firstName}
           email={email}
           initials={initials}
+          avatarUrl={avatarUrl}
           unreadNotifications={unreadNotifications}
           onMenuClick={toggleSidebar}
           signOutButton={signOutButton}

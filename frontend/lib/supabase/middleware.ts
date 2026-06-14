@@ -24,11 +24,36 @@ export async function updateSession(request: NextRequest) {
   )
 
   const { data: { user } } = await supabase.auth.getUser()
+  const path = request.nextUrl.pathname
 
-  if (!user && request.nextUrl.pathname.startsWith('/dashboard')) {
+  if (!user && (path.startsWith('/dashboard') || path.startsWith('/onboarding'))) {
     const url = request.nextUrl.clone()
     url.pathname = '/signin'
     return NextResponse.redirect(url)
+  }
+
+  if (user && (path.startsWith('/dashboard') || path.startsWith('/onboarding'))) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role, student_id, instructor_id')
+      .eq('id', user.id)
+      .single()
+
+    const needsOnboarding =
+      (profile?.role === 'student' && !profile.student_id) ||
+      (profile?.role === 'teacher' && !profile.instructor_id)
+
+    if (needsOnboarding && path.startsWith('/dashboard')) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/onboarding'
+      return NextResponse.redirect(url)
+    }
+
+    if (!needsOnboarding && path.startsWith('/onboarding')) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/dashboard'
+      return NextResponse.redirect(url)
+    }
   }
 
   return supabaseResponse

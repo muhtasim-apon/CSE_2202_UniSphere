@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { Bell, GraduationCap, Menu, Settings, User } from 'lucide-react'
 import type { ReactNode } from 'react'
 
@@ -8,6 +9,7 @@ type HeaderProps = {
   firstName: string
   email: string
   initials: string
+  avatarUrl?: string | null
   unreadNotifications: number
   onMenuClick: () => void
   signOutButton: ReactNode
@@ -17,6 +19,7 @@ export default function Header({
   firstName,
   email,
   initials,
+  avatarUrl,
   unreadNotifications,
   onMenuClick,
   signOutButton,
@@ -62,10 +65,15 @@ export default function Header({
         <button
           type="button"
           onClick={() => setProfileOpen((open) => !open)}
-          className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-sm font-semibold text-white transition hover:opacity-90"
+          className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-primary text-sm font-semibold text-white transition hover:opacity-90"
           aria-label="Open profile menu"
         >
-          {initials}
+          {avatarUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={avatarUrl} alt={firstName} className="h-full w-full object-cover" />
+          ) : (
+            initials
+          )}
         </button>
 
         {profileOpen && (
@@ -77,13 +85,14 @@ export default function Header({
                 <p className="truncate text-xs text-text-muted">{email}</p>
               </div>
 
-              <a
-                href="#"
+              <Link
+                href="/dashboard/profile"
+                onClick={() => setProfileOpen(false)}
                 className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-primary transition hover:bg-slate-50"
               >
                 <User className="h-4 w-4" />
                 Profile
-              </a>
+              </Link>
               <a
                 href="#"
                 className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-primary transition hover:bg-slate-50"

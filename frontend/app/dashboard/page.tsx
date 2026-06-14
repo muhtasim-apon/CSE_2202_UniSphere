@@ -1,6 +1,30 @@
 import { redirect } from 'next/navigation'
+import {
+  BookOpen,
+  Calendar,
+  ExternalLink,
+  Folder,
+  GraduationCap,
+  Megaphone,
+  MessageCircle,
+  Newspaper,
+  Trophy,
+} from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 import SignOutButton from './sign-out-button'
+import DashboardShell from './components/DashboardShell'
+import ModuleCard from './components/ModuleCard'
+import StreakWidget from './components/StreakWidget'
+import {
+  achievements,
+  articles,
+  chatMessages,
+  classModule,
+  notices,
+  projects,
+  streak,
+  upcomingClasses,
+} from './mock-data'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -16,58 +40,173 @@ export default async function DashboardPage() {
     .eq('id', user.id)
     .single()
 
-  // Demonstrate Next.js -> FastAPI -> Supabase call
-  let apiResult: unknown = null
-  let apiError: string | null = null
-  try {
-    const { data: { session } } = await supabase.auth.getSession()
-    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'}/api/me`, {
-      headers: { Authorization: `Bearer ${session?.access_token}` },
-    })
-    if (res.ok) {
-      apiResult = await res.json()
-    } else {
-      apiError = `API returned ${res.status}`
-    }
-  } catch {
-    apiError = 'Could not reach FastAPI backend'
-  }
+  const firstName = profile?.first_name || user.email?.split('@')[0] || 'Student'
+  const lastName = profile?.last_name || ''
+  const initials = `${firstName.charAt(0)}${lastName.charAt(0) || ''}`.toUpperCase()
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4 py-10">
-      <div className="w-full max-w-2xl rounded-2xl bg-white p-8 shadow-xl shadow-slate-200">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-900">Dashboard</h1>
-            <p className="mt-1 text-sm text-slate-500">{user.email}</p>
-          </div>
-          <SignOutButton />
+    <DashboardShell
+      firstName={firstName}
+      email={user.email ?? ''}
+      initials={initials}
+      unreadNotifications={3}
+      signOutButton={<SignOutButton />}
+    >
+      <div className="space-y-6">
+        {/* Row 1 */}
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+          <ModuleCard title="Notices" icon={Megaphone} iconBgClassName="bg-primary-light" viewAllHref="#">
+            <ul className="space-y-2">
+              {notices.map((notice) => (
+                <li key={notice.id} className="flex items-start justify-between gap-3 text-sm">
+                  <span className="text-text-primary">{notice.title}</span>
+                  <span className="whitespace-nowrap text-xs text-text-muted">{notice.timestamp}</span>
+                </li>
+              ))}
+            </ul>
+          </ModuleCard>
+
+          <ModuleCard
+            title="Chatroom"
+            icon={MessageCircle}
+            iconBgClassName="bg-emerald-50"
+            iconClassName="text-success"
+            viewAllHref="#"
+            viewAllLabel="Open chat"
+          >
+            <ul className="space-y-3">
+              {chatMessages.map((msg) => (
+                <li key={msg.id} className="flex items-start gap-3 text-sm">
+                  <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-primary-light text-xs font-semibold text-primary">
+                    {msg.initials}
+                  </span>
+                  <div>
+                    <p className="text-text-primary">
+                      <span className="font-medium">{msg.name}:</span> {msg.message}
+                    </p>
+                    <p className="text-xs text-text-muted">{msg.timestamp}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </ModuleCard>
         </div>
 
-        <div className="mt-6 grid gap-6 sm:grid-cols-2">
-          <div className="rounded-xl border border-slate-200 p-4">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
-              Profile (Supabase)
-            </h2>
-            <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
-              {JSON.stringify(profile, null, 2)}
-            </pre>
-          </div>
+        {/* Row 2 */}
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+          <ModuleCard title="Projects" icon={Folder} iconBgClassName="bg-primary-light" viewAllHref="#">
+            <ul className="space-y-3">
+              {projects.map((project) => (
+                <li key={project.id}>
+                  <div className="mb-1 flex items-center justify-between text-sm">
+                    <span className="font-medium text-text-primary">{project.name}</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-text-muted">
+                      {project.tag}
+                    </span>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div
+                      className="h-full rounded-full bg-success transition-all"
+                      style={{ width: `${project.progress}%` }}
+                    />
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </ModuleCard>
 
-          <div className="rounded-xl border border-slate-200 p-4">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-400">
-              Profile (FastAPI /api/me)
-            </h2>
-            {apiError ? (
-              <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{apiError}</p>
-            ) : (
-              <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-50 p-3 text-xs text-slate-700">
-                {JSON.stringify(apiResult, null, 2)}
-              </pre>
-            )}
+          <ModuleCard
+            title="Achievements"
+            icon={Trophy}
+            iconBgClassName="bg-amber-50"
+            iconClassName="text-accent"
+            viewAllHref="#"
+          >
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {achievements.map((badge) => (
+                <div key={badge.id} className="flex flex-col items-center gap-2 text-center">
+                  <span className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-50">
+                    <Trophy className="h-5 w-5 text-accent" />
+                  </span>
+                  <span className="text-xs font-medium text-text-muted">{badge.label}</span>
+                </div>
+              ))}
+            </div>
+          </ModuleCard>
+        </div>
+
+        {/* Banner / Link strip */}
+        <a
+          href={classModule.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex flex-col gap-3 rounded-2xl border border-slate-100 bg-surface p-4 shadow-sm transition hover:shadow-md sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-light">
+              <GraduationCap className="h-5 w-5 text-primary" />
+            </span>
+            <p className="text-sm font-medium text-text-primary">
+              On {classModule.teacher} Module — {classModule.className}
+            </p>
           </div>
+          <span className="flex items-center gap-1 self-start rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 sm:self-auto">
+            Open in Google Classroom
+            <ExternalLink className="h-4 w-4" />
+          </span>
+        </a>
+
+        {/* Row 3 */}
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+          <ModuleCard
+            title="Information & Tech"
+            icon={Newspaper}
+            iconBgClassName="bg-primary-light"
+            viewAllHref="#"
+          >
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-muted">Daily Updates</p>
+            <ul className="space-y-2">
+              {articles.map((article) => (
+                <li key={article.id} className="text-sm">
+                  <p className="text-text-primary">{article.title}</p>
+                  <p className="text-xs text-text-muted">
+                    {article.source} · {article.timestamp}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </ModuleCard>
+
+          <ModuleCard
+            title="Classes & Materials"
+            icon={BookOpen}
+            iconBgClassName="bg-emerald-50"
+            iconClassName="text-success"
+            viewAllHref="#"
+          >
+            <ul className="space-y-2">
+              {upcomingClasses.map((item) => (
+                <li key={item.id} className="flex items-center justify-between text-sm">
+                  <div>
+                    <p className="font-medium text-text-primary">{item.name}</p>
+                    <p className="text-xs text-text-muted">{item.location}</p>
+                  </div>
+                  <span className="flex items-center gap-1 whitespace-nowrap rounded-full bg-primary-light px-2 py-1 text-xs font-medium text-primary">
+                    <Calendar className="h-3 w-3" />
+                    {item.time}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </ModuleCard>
+
+          <StreakWidget
+            days={streak.days}
+            weeklyGoalLabel={streak.weeklyGoalLabel}
+            weeklyProgress={streak.weeklyProgress}
+          />
         </div>
       </div>
-    </main>
+    </DashboardShell>
   )
 }

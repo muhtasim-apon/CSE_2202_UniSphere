@@ -20,8 +20,8 @@ install-frontend: ## Install frontend (Next.js) dependencies
 
 install-backend: ## Create venv and install backend (FastAPI) dependencies
 	$(PYTHON) -m venv $(VENV)
-	$(VENV)\Scripts\python.exe -m pip install --upgrade pip
-	$(VENV)\Scripts\python.exe -m pip install -r $(BACKEND_DIR)\requirements.txt
+	$(VENV)\bin\python.exe -m pip install --upgrade pip
+	$(VENV)\bin\python.exe -m pip install --only-binary=:all: -r $(BACKEND_DIR)\requirements.txt
 
 run: ## Run frontend and backend together
 	$(MAKE) -j2 backend frontend
@@ -30,7 +30,7 @@ frontend: ## Start the Next.js dev server (http://localhost:3000)
 	cd $(FRONTEND_DIR) && npm run dev
 
 backend: ## Start the FastAPI dev server (http://localhost:8000)
-	cd $(BACKEND_DIR) && venv\Scripts\uvicorn.exe main:app --reload
+	cd $(BACKEND_DIR) && venv\bin\uvicorn.exe main:app --reload
 
 clean: ## Remove installed dependencies and build artifacts
 	$(CLEAN_CMD)

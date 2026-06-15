@@ -22,13 +22,13 @@ export default function ModuleCard({
   children,
 }: ModuleCardProps) {
   return (
-    <div className="rounded-2xl border border-slate-100 bg-surface p-5 shadow-sm transition hover:shadow-md">
+    <div className="rounded-card border border-border bg-card p-5 shadow-[var(--shadow-card)] transition hover:shadow-md">
       <div className={`mb-4 flex h-24 items-center justify-center rounded-xl md:h-28 ${iconBgClassName}`}>
         <Icon className={`h-8 w-8 ${iconClassName}`} />
       </div>
 
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-base font-semibold text-text-primary">{title}</h3>
+        <h3 className="font-display text-base font-semibold text-text-primary">{title}</h3>
         {viewAllHref && (
           <a
             href={viewAllHref}

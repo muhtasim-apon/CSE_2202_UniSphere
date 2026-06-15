@@ -43,7 +43,7 @@ export default async function ProfilePage() {
       {profileData ? (
         <ProfileView userId={user.id} role={role} initialProfile={profileData} />
       ) : (
-        <div className="rounded-2xl border border-slate-100 bg-surface p-5 text-sm text-text-muted shadow-sm">
+        <div className="rounded-card border border-border bg-card p-5 text-sm text-text-muted shadow-[var(--shadow-card)]">
           Could not load your profile{profileError ? `: ${profileError.message}` : '.'}
         </div>
       )}

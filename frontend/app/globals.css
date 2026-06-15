@@ -1,3 +1,157 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  --color-background: #F7F9FC;
+  --color-card: #FFFFFF;
+  --color-primary: #0C2340;
+  --color-secondary: #1A4A6E;
+  --color-accent: #2D8A9E;
+  --color-accent-tint: #E3F0F3;
+  --color-highlight: #5CBDB9;
+  --color-muted: #64748B;
+  --color-cta: #0C2340;
+  --color-cta-text: #FFFFFF;
+  --color-border: #E2E8F0;
+  --shadow-card: 0 4px 24px -8px rgba(12, 35, 64, 0.12);
+}
+
+.dark {
+  --color-background: #141d2b;
+  --color-card: #1a2332;
+  --color-primary: #9fef00;
+  --color-secondary: #2b3245;
+  --color-accent: #9fef00;
+  --color-accent-tint: rgba(159, 239, 0, 0.12);
+  --color-highlight: #b6ff3b;
+  --color-muted: #a4b1cd;
+  --color-cta: #9fef00;
+  --color-cta-text: #141d2b;
+  --color-border: rgba(159, 239, 0, 0.14);
+  --shadow-card: none;
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+html,
+body {
+  background-color: var(--color-background);
+  color: var(--color-primary);
+}
+
+body,
+.theme-crossfade {
+  transition: background-color 400ms ease, color 400ms ease;
+}
+
+/* ---------------------------------------------------------------- */
+/* Ambient moving background                                          */
+/* ---------------------------------------------------------------- */
+.ambient-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.ambient-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(80px);
+  opacity: 0.35;
+  transition: background 400ms ease, opacity 400ms ease;
+}
+
+.ambient-blob--one {
+  width: 38rem;
+  height: 38rem;
+  top: -10rem;
+  left: -8rem;
+  background: var(--color-accent);
+  animation: drift-one 60s ease-in-out infinite alternate;
+}
+
+.ambient-blob--two {
+  width: 32rem;
+  height: 32rem;
+  bottom: -10rem;
+  right: -6rem;
+  background: var(--color-highlight);
+  animation: drift-two 75s ease-in-out infinite alternate;
+}
+
+.ambient-blob--three {
+  width: 26rem;
+  height: 26rem;
+  top: 40%;
+  left: 50%;
+  background: var(--color-secondary);
+  opacity: 0.2;
+  animation: drift-three 90s ease-in-out infinite alternate;
+}
+
+.dark .ambient-blob {
+  opacity: 0.18;
+}
+
+@keyframes drift-one {
+  from { transform: translate(0, 0) scale(1); }
+  to { transform: translate(6rem, 4rem) scale(1.15); }
+}
+
+@keyframes drift-two {
+  from { transform: translate(0, 0) scale(1); }
+  to { transform: translate(-5rem, -3rem) scale(1.1); }
+}
+
+@keyframes drift-three {
+  from { transform: translate(-50%, -50%) scale(1); }
+  to { transform: translate(-50%, -50%) translate(3rem, -5rem) scale(1.2); }
+}
+
+/* ---------------------------------------------------------------- */
+/* Ripple effect                                                      */
+/* ---------------------------------------------------------------- */
+.ripple-container {
+  position: relative;
+  overflow: hidden;
+}
+
+.ripple {
+  position: absolute;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.25;
+  transform: scale(0);
+  animation: ripple-grow 550ms ease-out forwards;
+  pointer-events: none;
+}
+
+@keyframes ripple-grow {
+  to {
+    transform: scale(2.5);
+    opacity: 0;
+  }
+}
+
+/* ---------------------------------------------------------------- */
+/* Reduced motion                                                     */
+/* ---------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .ambient-blob {
+    animation: none !important;
+  }
+  .ripple {
+    display: none !important;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

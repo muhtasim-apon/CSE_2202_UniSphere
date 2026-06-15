@@ -27,13 +27,13 @@ export default function Header({
   const [profileOpen, setProfileOpen] = useState(false)
 
   return (
-    <header className="flex items-center justify-between border-b border-border-subtle bg-surface px-4 py-3 md:px-6">
+    <header className="flex items-center justify-between border-b border-border bg-card px-4 py-3 md:px-6">
       <div className="flex items-center gap-3">
         <button
           type="button"
           onClick={onMenuClick}
           aria-label="Toggle sidebar"
-          className="rounded-lg p-2 text-text-muted transition hover:bg-slate-50 hover:text-text-primary"
+          className="rounded-lg p-2 text-text-muted transition hover:bg-accent/5 hover:text-primary"
         >
           <Menu className="h-5 w-5" />
         </button>
@@ -41,7 +41,7 @@ export default function Header({
         <button
           type="button"
           aria-label="Notifications"
-          className="relative rounded-lg p-2 text-text-muted transition hover:bg-slate-50 hover:text-text-primary"
+          className="relative rounded-lg p-2 text-text-muted transition hover:bg-accent/5 hover:text-primary"
         >
           <Bell className="h-5 w-5" />
           {unreadNotifications > 0 && (
@@ -79,7 +79,7 @@ export default function Header({
         {profileOpen && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setProfileOpen(false)} aria-hidden="true" />
-            <div className="absolute right-0 top-12 z-50 w-56 rounded-2xl border border-border-subtle bg-surface p-2 shadow-md">
+            <div className="absolute right-0 top-12 z-50 w-56 rounded-2xl border border-border bg-card p-2 shadow-md">
               <div className="border-b border-border-subtle px-3 py-2">
                 <p className="text-sm font-semibold text-text-primary">{firstName}</p>
                 <p className="truncate text-xs text-text-muted">{email}</p>
@@ -88,14 +88,14 @@ export default function Header({
               <Link
                 href="/dashboard/profile"
                 onClick={() => setProfileOpen(false)}
-                className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-primary transition hover:bg-slate-50"
+                className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-primary transition hover:bg-accent/5"
               >
                 <User className="h-4 w-4" />
                 Profile
               </Link>
               <a
                 href="#"
-                className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-primary transition hover:bg-slate-50"
+                className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-primary transition hover:bg-accent/5"
               >
                 <Settings className="h-4 w-4" />
                 Settings

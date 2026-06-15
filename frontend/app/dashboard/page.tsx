@@ -71,8 +71,8 @@ export default async function DashboardPage() {
           <ModuleCard
             title="Chatroom"
             icon={MessageCircle}
-            iconBgClassName="bg-emerald-50"
-            iconClassName="text-success"
+            iconBgClassName="bg-highlight/10"
+            iconClassName="text-highlight"
             viewAllHref="#"
             viewAllLabel="Open chat"
           >
@@ -102,13 +102,13 @@ export default async function DashboardPage() {
                 <li key={project.id}>
                   <div className="mb-1 flex items-center justify-between text-sm">
                     <span className="font-medium text-text-primary">{project.name}</span>
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-text-muted">
+                    <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs text-text-muted">
                       {project.tag}
                     </span>
                   </div>
-                  <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-accent/10">
                     <div
-                      className="h-full rounded-full bg-success transition-all"
+                      className="h-full rounded-full bg-highlight transition-all duration-500"
                       style={{ width: `${project.progress}%` }}
                     />
                   </div>
@@ -120,14 +120,14 @@ export default async function DashboardPage() {
           <ModuleCard
             title="Achievements"
             icon={Trophy}
-            iconBgClassName="bg-amber-50"
+            iconBgClassName="bg-accent/10"
             iconClassName="text-accent"
             viewAllHref="#"
           >
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               {achievements.map((badge) => (
                 <div key={badge.id} className="flex flex-col items-center gap-2 text-center">
-                  <span className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-50">
+                  <span className="flex h-12 w-12 items-center justify-center rounded-full bg-accent/10">
                     <Trophy className="h-5 w-5 text-accent" />
                   </span>
                   <span className="text-xs font-medium text-text-muted">{badge.label}</span>
@@ -142,7 +142,7 @@ export default async function DashboardPage() {
           href={classModule.href}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex flex-col gap-3 rounded-2xl border border-slate-100 bg-surface p-4 shadow-sm transition hover:shadow-md sm:flex-row sm:items-center sm:justify-between"
+          className="flex flex-col gap-3 rounded-card border border-border bg-card p-4 shadow-[var(--shadow-card)] transition hover:shadow-md sm:flex-row sm:items-center sm:justify-between"
         >
           <div className="flex items-center gap-3">
             <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-light">
@@ -152,7 +152,7 @@ export default async function DashboardPage() {
               On {classModule.teacher} Module — {classModule.className}
             </p>
           </div>
-          <span className="flex items-center gap-1 self-start rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90 sm:self-auto">
+          <span className="flex items-center gap-1 self-start rounded-lg bg-cta px-4 py-2 text-sm font-semibold text-cta-text transition hover:opacity-90 sm:self-auto">
             Open in Google Classroom
             <ExternalLink className="h-4 w-4" />
           </span>
@@ -182,8 +182,8 @@ export default async function DashboardPage() {
           <ModuleCard
             title="Classes & Materials"
             icon={BookOpen}
-            iconBgClassName="bg-emerald-50"
-            iconClassName="text-success"
+            iconBgClassName="bg-highlight/10"
+            iconClassName="text-highlight"
             viewAllHref="#"
           >
             <ul className="space-y-2">

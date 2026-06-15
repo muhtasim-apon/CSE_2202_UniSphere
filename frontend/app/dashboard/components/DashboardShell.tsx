@@ -4,6 +4,7 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import Sidebar from './Sidebar'
 import Header from './Header'
+import PageTransition from '../../components/PageTransition'
 
 type DashboardShellProps = {
   firstName: string
@@ -54,7 +55,9 @@ export default function DashboardShell({
           signOutButton={signOutButton}
         />
 
-        <main className="flex-1 overflow-y-auto p-4 md:p-8">{children}</main>
+        <main className="flex-1 overflow-y-auto p-4 md:p-8">
+          <PageTransition>{children}</PageTransition>
+        </main>
       </div>
     </div>
   )

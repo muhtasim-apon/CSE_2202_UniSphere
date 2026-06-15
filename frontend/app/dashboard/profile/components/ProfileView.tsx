@@ -58,7 +58,7 @@ type ProfileViewProps =
   | { userId: string; role: 'instructor'; initialProfile: InstructorProfile }
 
 const inputClass =
-  'w-full rounded-lg border border-border-subtle px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary-light'
+  'w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20'
 
 const labelClass = 'mb-1 block text-sm font-medium text-text-primary'
 
@@ -199,7 +199,7 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
   return (
     <div className="space-y-6">
       {/* Header card */}
-      <div className="rounded-2xl border border-slate-100 bg-surface p-5 shadow-sm">
+      <div className="rounded-card border border-border bg-card p-5 shadow-[var(--shadow-card)]">
         <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
           <div className="flex items-center gap-4">
             <ProfilePhotoUpload
@@ -211,7 +211,7 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
             />
             <div>
               <h2 className="text-lg font-semibold text-text-primary">{fullName}</h2>
-              <span className="mt-1 inline-flex items-center rounded-full bg-primary-light px-2 py-0.5 text-xs font-medium capitalize text-primary">
+              <span className="mt-1 inline-flex items-center rounded-full bg-accent/10 px-2 py-0.5 text-xs font-medium capitalize text-primary">
                 {role}
               </span>
             </div>
@@ -222,8 +222,8 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
             onClick={() => (editing ? cancelEdit() : setEditing(true))}
             className={`flex items-center gap-2 self-start rounded-lg px-4 py-2 text-sm font-semibold transition sm:self-auto ${
               editing
-                ? 'bg-slate-100 text-text-primary hover:bg-slate-200'
-                : 'bg-primary text-white hover:opacity-90'
+                ? 'bg-accent/10 text-text-primary hover:bg-accent/20'
+                : 'bg-cta text-cta-text hover:opacity-90'
             }`}
           >
             {editing ? <X className="h-4 w-4" /> : <Pencil className="h-4 w-4" />}
@@ -233,7 +233,7 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
       </div>
 
       {/* Read-only info */}
-      <ModuleCard title="Profile Information" icon={User} iconBgClassName="bg-primary-light">
+      <ModuleCard title="Profile Information" icon={User} iconBgClassName="bg-accent/10">
         {role === 'student' && student ? (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
             <InfoField label="Registration No" value={student.student_roll} />
@@ -258,7 +258,7 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
       </ModuleCard>
 
       {/* Editable form */}
-      <ModuleCard title="Edit Details" icon={Pencil} iconBgClassName="bg-emerald-50" iconClassName="text-success">
+      <ModuleCard title="Edit Details" icon={Pencil} iconBgClassName="bg-highlight/10" iconClassName="text-highlight">
         <form onSubmit={handleSave} className="space-y-4">
           <fieldset disabled={!editing} className="space-y-4 disabled:opacity-60">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -362,14 +362,14 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
             )}
           </fieldset>
 
-          {error && <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-notification">{error}</p>}
-          {success && <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-success">Profile updated successfully.</p>}
+          {error && <p className="rounded-lg bg-notification/10 px-3 py-2 text-sm text-notification">{error}</p>}
+          {success && <p className="rounded-lg bg-highlight/10 px-3 py-2 text-sm text-highlight">Profile updated successfully.</p>}
 
           {editing && (
             <button
               type="submit"
               disabled={saving}
-              className="rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-lg bg-cta px-4 py-2.5 text-sm font-semibold text-cta-text transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {saving ? 'Saving...' : 'Save Changes'}
             </button>

@@ -13,6 +13,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { navItems } from '../nav-items'
+import ThemeToggle from '../../components/ThemeToggle'
 
 const ICONS: Record<string, LucideIcon> = {
   dashboard: LayoutDashboard,
@@ -44,7 +45,7 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile, activeIt
       )}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r border-border-subtle bg-surface transition-all duration-200 md:static md:translate-x-0
+        className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r border-border bg-card transition-all duration-theme md:static md:translate-x-0
           ${collapsed ? 'md:w-16' : 'md:w-60'}
           ${mobileOpen ? 'w-60 translate-x-0' : '-translate-x-full md:translate-x-0'}
         `}
@@ -60,7 +61,7 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile, activeIt
                     href={item.href}
                     title={item.label}
                     className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition
-                      ${isActive ? 'bg-primary-light text-primary' : 'text-text-muted hover:bg-slate-50 hover:text-text-primary'}
+                      ${isActive ? 'bg-accent/15 text-accent' : 'text-muted hover:bg-accent/5 hover:text-primary'}
                       ${collapsed ? 'md:justify-center' : ''}
                     `}
                   >
@@ -72,6 +73,10 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile, activeIt
             })}
           </ul>
         </nav>
+
+        <div className="border-t border-border px-2 py-3">
+          <ThemeToggle collapsed={collapsed} />
+        </div>
       </aside>
     </>
   )

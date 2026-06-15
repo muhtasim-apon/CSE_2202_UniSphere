@@ -71,7 +71,7 @@ export default function ProfilePhotoUpload({ userId, role, photoUrl, initials, o
 
   return (
     <div className="flex items-center gap-4">
-      <div className="relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-full bg-primary-light">
+      <div className="relative h-20 w-20 flex-shrink-0 overflow-hidden rounded-full bg-accent/10">
         {displayUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={displayUrl} alt="Profile photo" className="h-full w-full object-cover" />
@@ -92,7 +92,7 @@ export default function ProfilePhotoUpload({ userId, role, photoUrl, initials, o
         />
         <label
           htmlFor="profile-photo-input"
-          className="cursor-pointer rounded-lg bg-primary-light px-3 py-2 text-sm font-medium text-primary transition hover:opacity-90"
+          className="cursor-pointer rounded-lg bg-accent/10 px-3 py-2 text-sm font-medium text-accent transition hover:bg-accent/20"
         >
           {uploading ? 'Uploading...' : 'Change photo'}
         </label>

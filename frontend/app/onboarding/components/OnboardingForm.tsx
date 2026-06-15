@@ -19,9 +19,9 @@ import {
 } from '@/lib/validation'
 
 const inputClass =
-  'w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100'
+  'w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20'
 
-const labelClass = 'mb-1 block text-sm font-medium text-slate-700'
+const labelClass = 'mb-1 block text-sm font-medium text-text-primary'
 
 type OnboardingFormProps = {
   role: 'student' | 'instructor'
@@ -321,13 +321,13 @@ export default function OnboardingForm({ role }: OnboardingFormProps) {
       )}
 
       {error && (
-        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
+        <p className="rounded-lg bg-notification/10 px-3 py-2 text-sm text-notification">{error}</p>
       )}
 
       <button
         type="submit"
         disabled={submitting}
-        className="mt-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+        className="mt-2 rounded-lg bg-cta px-4 py-2.5 text-sm font-semibold text-cta-text transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {submitting ? 'Saving...' : 'Continue to Dashboard'}
       </button>

@@ -9,7 +9,7 @@ type StreakWidgetProps = {
 
 export default function StreakWidget({ days, weeklyGoalLabel, weeklyProgress }: StreakWidgetProps) {
   return (
-    <ModuleCard title="Streak & Goals" icon={Flame} iconBgClassName="bg-amber-50" iconClassName="text-accent">
+    <ModuleCard title="Streak & Goals" icon={Flame} iconBgClassName="bg-accent/10" iconClassName="text-accent">
       <div className="flex items-center gap-3">
         <Flame className="h-8 w-8 text-accent" />
         <div>
@@ -26,9 +26,9 @@ export default function StreakWidget({ days, weeklyGoalLabel, weeklyProgress }: 
           </span>
           <span className="text-text-muted">{weeklyProgress}%</span>
         </div>
-        <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+        <div className="h-2 w-full overflow-hidden rounded-full bg-accent/10">
           <div
-            className="h-full rounded-full bg-success transition-all"
+            className="h-full rounded-full bg-highlight transition-all duration-500"
             style={{ width: `${weeklyProgress}%` }}
           />
         </div>

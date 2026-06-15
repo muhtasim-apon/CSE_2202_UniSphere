@@ -6,9 +6,9 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
 const inputClass =
-  'w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-100'
+  'w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20'
 
-const labelClass = 'mb-1 block text-sm font-medium text-slate-700'
+const labelClass = 'mb-1 block text-sm font-medium text-text-primary'
 
 export default function SignInPage() {
   const [email, setEmail] = useState('')
@@ -37,10 +37,10 @@ export default function SignInPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4">
-      <div className="w-full max-w-sm rounded-2xl bg-white p-8 shadow-xl shadow-slate-200">
-        <h1 className="text-2xl font-bold text-slate-900">Welcome back</h1>
-        <p className="mt-1 text-sm text-slate-500">Sign in to your account.</p>
+    <main className="flex min-h-screen items-center justify-center px-4 font-sans">
+      <div className="w-full max-w-sm rounded-card border border-border bg-card p-8 shadow-[var(--shadow-card)]">
+        <h1 className="font-display text-2xl font-bold text-text-primary">Welcome back</h1>
+        <p className="mt-1 text-sm text-text-muted">Sign in to your account.</p>
 
         <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4">
           <div>
@@ -53,21 +53,21 @@ export default function SignInPage() {
           </div>
 
           {error && (
-            <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
+            <p className="rounded-lg bg-notification/10 px-3 py-2 text-sm text-notification">{error}</p>
           )}
 
           <button
             type="submit"
             disabled={loading}
-            className="mt-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-60"
+            className="mt-2 rounded-lg bg-cta px-4 py-2.5 text-sm font-semibold text-cta-text transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
 
-        <p className="mt-6 text-center text-sm text-slate-500">
+        <p className="mt-6 text-center text-sm text-text-muted">
           Don&apos;t have an account?{' '}
-          <Link href="/signup" className="font-semibold text-indigo-600 hover:text-indigo-700">
+          <Link href="/signup" className="font-semibold text-accent hover:text-highlight">
             Sign up
           </Link>
         </p>

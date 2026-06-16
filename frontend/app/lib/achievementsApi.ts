@@ -447,7 +447,7 @@ export async function getHackathons(token: string, userId?: string, page = 1): P
   return res.json()
 }
 
-export async function createHackathon(token: string, data: Partial<Hackathon> & { skill_ids?: number[] }): Promise<Hackathon> {
+export async function createHackathon(token: string, data: Partial<Hackathon> & { skill_ids?: number[]; skill_names?: string[] }): Promise<Hackathon> {
   const res = await apiFetch(`${BASE}/api/achievements/hackathons`, {
     method: 'POST',
     headers: authHeader(token),

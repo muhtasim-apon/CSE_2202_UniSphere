@@ -26,6 +26,3 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
-
-# Local build helper
-Makefile

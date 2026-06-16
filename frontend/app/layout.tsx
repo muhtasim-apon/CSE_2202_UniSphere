@@ -3,6 +3,7 @@ import { DM_Sans, Space_Grotesk } from 'next/font/google'
 import './globals.css'
 import { ThemeProvider, NO_FLASH_SCRIPT } from './theme-provider'
 import AmbientBackground from './components/AmbientBackground'
+import { NotificationProvider } from './context/NotificationContext'
 
 const spaceGrotesk = Space_Grotesk({
   subsets: ['latin'],
@@ -30,7 +31,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="theme-crossfade min-h-screen bg-background font-sans text-primary">
         <ThemeProvider>
           <AmbientBackground />
-          {children}
+          <NotificationProvider>
+            {children}
+          </NotificationProvider>
         </ThemeProvider>
       </body>
     </html>

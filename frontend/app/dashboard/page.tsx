@@ -20,29 +20,53 @@ import {
   articles,
   chatMessages,
   classModule,
-  notices,
   projects,
   streak,
   upcomingClasses,
 } from './mock-data'
 
+function formatRelativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const min = Math.floor(diff / 60000)
+  if (min < 1) return 'Just now'
+  if (min < 60) return `${min}m ago`
+  const h = Math.floor(min / 60)
+  if (h < 24) return `${h}h ago`
+  const d = Math.floor(h / 24)
+  if (d < 7) return `${d}d ago`
+  return new Date(iso).toLocaleDateString()
+}
+
 export default async function DashboardPage() {
   const supabase = await createClient()
 
   const { data: { user } } = await supabase.auth.getUser()
-  if (!user) {
-    redirect('/signin')
-  }
+  if (!user) redirect('/signin')
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', user.id)
-    .single()
+  const [{ data: profile }, { data: { session } }] = await Promise.all([
+    supabase.from('profiles').select('*').eq('id', user.id).single(),
+    supabase.auth.getSession(),
+  ])
 
   const firstName = profile?.first_name || user.email?.split('@')[0] || 'Student'
   const lastName = profile?.last_name || ''
   const initials = `${firstName.charAt(0)}${lastName.charAt(0) || ''}`.toUpperCase()
+
+  // Fetch 2 latest real notices
+  let recentNotices: Array<{ id: string; title: string; created_at: string }> = []
+  if (session?.access_token) {
+    try {
+      const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
+      const res = await fetch(`${BASE}/api/notices?page=1&limit=2`, {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: 'no-store',
+      })
+      if (res.ok) {
+        const data = await res.json()
+        recentNotices = data.notices ?? []
+      }
+    } catch {}
+  }
 
   return (
     <DashboardShell
@@ -50,22 +74,32 @@ export default async function DashboardPage() {
       email={user.email ?? ''}
       initials={initials}
       avatarUrl={profile?.avatar_url}
-      unreadNotifications={3}
       signOutButton={<SignOutButton />}
       activeItem="dashboard"
     >
       <div className="space-y-6">
         {/* Row 1 */}
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-          <ModuleCard title="Notices" icon={Megaphone} iconBgClassName="bg-primary-light" viewAllHref="#">
-            <ul className="space-y-2">
-              {notices.map((notice) => (
-                <li key={notice.id} className="flex items-start justify-between gap-3 text-sm">
-                  <span className="text-text-primary">{notice.title}</span>
-                  <span className="whitespace-nowrap text-xs text-text-muted">{notice.timestamp}</span>
-                </li>
-              ))}
-            </ul>
+          <ModuleCard
+            title="Notices"
+            icon={Megaphone}
+            iconBgClassName="bg-primary-light"
+            viewAllHref="/dashboard/notice-board"
+          >
+            {recentNotices.length > 0 ? (
+              <ul className="space-y-2">
+                {recentNotices.map((notice) => (
+                  <li key={notice.id} className="flex items-start justify-between gap-3 text-sm">
+                    <span className="text-text-primary">{notice.title}</span>
+                    <span className="whitespace-nowrap text-xs text-text-muted">
+                      {formatRelativeTime(notice.created_at)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-text-muted">No notices yet.</p>
+            )}
           </ModuleCard>
 
           <ModuleCard
@@ -137,7 +171,7 @@ export default async function DashboardPage() {
           </ModuleCard>
         </div>
 
-        {/* Banner / Link strip */}
+        {/* Banner */}
         <a
           href={classModule.href}
           target="_blank"

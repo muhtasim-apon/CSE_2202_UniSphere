@@ -36,7 +36,6 @@ export default async function ProfilePage() {
       email={user.email ?? ''}
       initials={initials}
       avatarUrl={profileData?.profile_photo}
-      unreadNotifications={3}
       signOutButton={<SignOutButton />}
       activeItem="profile"
     >

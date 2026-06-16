@@ -11,9 +11,9 @@ type DashboardShellProps = {
   email: string
   initials: string
   avatarUrl?: string | null
-  unreadNotifications: number
   signOutButton: ReactNode
   activeItem?: string
+  userRole?: string
   children: ReactNode
 }
 
@@ -22,9 +22,9 @@ export default function DashboardShell({
   email,
   initials,
   avatarUrl,
-  unreadNotifications,
   signOutButton,
   activeItem = 'dashboard',
+  userRole,
   children,
 }: DashboardShellProps) {
   const [collapsed, setCollapsed] = useState(false)
@@ -50,9 +50,9 @@ export default function DashboardShell({
           email={email}
           initials={initials}
           avatarUrl={avatarUrl}
-          unreadNotifications={unreadNotifications}
           onMenuClick={toggleSidebar}
           signOutButton={signOutButton}
+          userRole={userRole}
         />
 
         <main className="flex-1 overflow-y-auto p-4 md:p-8">

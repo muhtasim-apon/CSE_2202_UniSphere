@@ -3,7 +3,6 @@ import {
   BookOpen,
   Calendar,
   ExternalLink,
-  Folder,
   GraduationCap,
   Megaphone,
   MessageCircle,
@@ -14,13 +13,13 @@ import { createClient } from '@/lib/supabase/server'
 import SignOutButton from './sign-out-button'
 import DashboardShell from './components/DashboardShell'
 import ModuleCard from './components/ModuleCard'
+import ProjectsModuleCard from './components/ProjectsModuleCard'
 import StreakWidget from './components/StreakWidget'
 import {
   achievements,
   articles,
   chatMessages,
   classModule,
-  projects,
   streak,
   upcomingClasses,
 } from './mock-data'
@@ -130,26 +129,7 @@ export default async function DashboardPage() {
 
         {/* Row 2 */}
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
-          <ModuleCard title="Projects" icon={Folder} iconBgClassName="bg-primary-light" viewAllHref="#">
-            <ul className="space-y-3">
-              {projects.map((project) => (
-                <li key={project.id}>
-                  <div className="mb-1 flex items-center justify-between text-sm">
-                    <span className="font-medium text-text-primary">{project.name}</span>
-                    <span className="rounded-full bg-accent/10 px-2 py-0.5 text-xs text-text-muted">
-                      {project.tag}
-                    </span>
-                  </div>
-                  <div className="h-2 w-full overflow-hidden rounded-full bg-accent/10">
-                    <div
-                      className="h-full rounded-full bg-highlight transition-all duration-500"
-                      style={{ width: `${project.progress}%` }}
-                    />
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </ModuleCard>
+          <ProjectsModuleCard />
 
           <ModuleCard
             title="Achievements"

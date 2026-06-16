@@ -7,7 +7,7 @@ export type AppNotification = {
   title: string
   body: string
   href: string
-  type: 'notice' | 'profile' | 'system'
+  type: 'notice' | 'profile' | 'system' | 'new_project' | 'new_certificate' | 'new_research_paper' | 'new_comment' | 'new_reaction' | 'new_rating'
   timestamp: string
   read: boolean
 }

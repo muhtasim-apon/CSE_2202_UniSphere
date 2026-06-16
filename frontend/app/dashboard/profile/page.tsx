@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import SignOutButton from '../sign-out-button'
 import DashboardShell from '../components/DashboardShell'
 import ProfileView from './components/ProfileView'
+import ProfileAchievements from './components/ProfileAchievements'
 
 export default async function ProfilePage() {
   const supabase = await createClient()
@@ -40,7 +41,10 @@ export default async function ProfilePage() {
       activeItem="profile"
     >
       {profileData ? (
-        <ProfileView userId={user.id} role={role} initialProfile={profileData} />
+        <>
+          <ProfileView userId={user.id} role={role} initialProfile={profileData} />
+          <ProfileAchievements userId={user.id} />
+        </>
       ) : (
         <div className="rounded-card border border-border bg-card p-5 text-sm text-text-muted shadow-[var(--shadow-card)]">
           Could not load your profile{profileError ? `: ${profileError.message}` : '.'}

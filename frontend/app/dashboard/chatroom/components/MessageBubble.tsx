@@ -209,9 +209,11 @@ export default function MessageBubble({
         </div>
         {isOwn && (
           <>
-            <button onClick={() => onEdit(message)} className="p-1.5 rounded-lg text-muted hover:text-accent hover:bg-secondary/30 transition-colors" title="Edit">
-              <Edit2 size={13} />
-            </button>
+            {message.body && (
+              <button onClick={() => onEdit(message)} className="p-1.5 rounded-lg text-muted hover:text-accent hover:bg-secondary/30 transition-colors" title="Edit">
+                <Edit2 size={13} />
+              </button>
+            )}
             <button onClick={() => onDelete(message.id)} className="p-1.5 rounded-lg text-muted hover:text-red-500 hover:bg-red-500/10 transition-colors" title="Delete">
               <Trash2 size={13} />
             </button>

@@ -11,6 +11,7 @@ from supabase import create_client
 load_dotenv()
 
 from routers.achievements import router as achievements_router  # noqa: E402
+from routers.chat import router as chat_router  # noqa: E402
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
@@ -20,7 +21,7 @@ supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    for bucket in ("notice-attachments", "achievement-media"):
+    for bucket in ("notice-attachments", "achievement-media", "chat-attachments"):
         try:
             supabase.storage.create_bucket(
                 bucket,
@@ -34,6 +35,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 
 app.include_router(achievements_router)
+app.include_router(chat_router)
 
 app.add_middleware(
     CORSMiddleware,

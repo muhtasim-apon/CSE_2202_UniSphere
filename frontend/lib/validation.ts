@@ -67,7 +67,8 @@ export function validateProgramCode(code: string): string | null {
 }
 
 export function validateRegistrationNo(regNo: string): string | null {
-  if (!/^[0-9]{4,20}$/.test(regNo)) return 'Must be 4-20 digits'
+  if (!/^[0-9]{4,20}$/.test(regNo))
+    return 'Must be 4-20 digits (e.g. 2023010123)'
   return null
 }
 

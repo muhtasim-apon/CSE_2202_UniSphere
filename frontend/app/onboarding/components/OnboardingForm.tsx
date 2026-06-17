@@ -213,12 +213,11 @@ export default function OnboardingForm({ role }: OnboardingFormProps) {
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
-              <label className={labelClass}>Registration No</label>
+              <label className={labelClass}>Registration No.</label>
               <input
                 className={inputClass}
                 value={registrationNo}
                 onChange={(e) => setRegistrationNo(e.target.value.replace(/[^0-9]/g, ''))}
-                inputMode="numeric"
                 placeholder="2023010123"
                 required
               />

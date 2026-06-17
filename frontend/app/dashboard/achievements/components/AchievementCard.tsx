@@ -242,17 +242,31 @@ export default function AchievementCard({ data, token, currentDbUserId, onEdit }
         )}
       </div>
 
-      {/* Media thumbnails */}
+      {/* Media */}
       {data.media && data.media.length > 0 && (
-        <div className="mb-3 flex gap-2 overflow-x-auto">
+        <div className={`mb-3 grid gap-2 ${data.media.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
           {data.media.map((m) =>
             m.file_type === 'image' ? (
-              <button key={m.media_id} onClick={() => setLightbox(m.file_url)} className="flex-shrink-0">
-                <img src={m.file_url} alt={m.file_name} className="h-16 w-16 rounded-lg object-cover transition hover:opacity-80" />
+              <button
+                key={m.media_id}
+                onClick={() => setLightbox(m.file_url)}
+                className="overflow-hidden rounded-xl"
+              >
+                <img
+                  src={m.file_url}
+                  alt={m.file_name}
+                  className="w-full rounded-xl object-cover transition hover:opacity-80"
+                />
               </button>
             ) : (
-              <a key={m.media_id} href={m.file_url} target="_blank" rel="noopener noreferrer" className="flex h-16 w-16 flex-shrink-0 items-center justify-center rounded-lg border border-border bg-background text-xs text-text-muted transition hover:border-primary">
-                {m.file_type}
+              <a
+                key={m.media_id}
+                href={m.file_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center rounded-xl border border-border bg-background px-4 py-8 text-xs text-text-muted transition hover:border-primary hover:text-primary"
+              >
+                {m.file_name || m.file_type}
               </a>
             ),
           )}

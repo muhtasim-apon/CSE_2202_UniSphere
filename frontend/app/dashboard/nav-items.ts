@@ -9,6 +9,7 @@ export const navItems: NavItem[] = [
   { id: 'notices', label: 'Notices', href: '/dashboard/notice-board' },
   { id: 'chatroom', label: 'Chatroom', href: '/dashboard/chatroom' },
   { id: 'projects', label: 'Projects', href: '/dashboard/projects' },
+  { id: 'info-tech', label: 'Info & Tech', href: '/dashboard/info-tech' },
   { id: 'classes', label: 'Classes', href: '#' },
   { id: 'achievements', label: 'Achievements', href: '#' },
   { id: 'profile', label: 'Profile', href: '/dashboard/profile' },

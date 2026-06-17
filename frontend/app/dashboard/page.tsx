@@ -178,7 +178,7 @@ export default async function DashboardPage() {
             title="Information & Tech"
             icon={Newspaper}
             iconBgClassName="bg-primary-light"
-            viewAllHref="#"
+            viewAllHref="/dashboard/info-tech"
           >
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-muted">Daily Updates</p>
             <ul className="space-y-2">

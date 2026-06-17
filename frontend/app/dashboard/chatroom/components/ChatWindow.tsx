@@ -17,11 +17,12 @@ type Props = {
   roomAvatar?: string | null
   currentUserId: string
   currentUserName: string | null
+  currentUserAvatar?: string | null
   token: string
   onNewMessage?: (roomId: string, senderId: string, body: string | null, createdAt: string) => void
 }
 
-export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserId, currentUserName, token, onNewMessage }: Props) {
+export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserId, currentUserName, currentUserAvatar, token, onNewMessage }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [body, setBody] = useState('')
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null)
@@ -35,7 +36,7 @@ export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserI
   // Cache sender profiles so realtime messages can show the correct name/avatar
   const profileCache = useRef<Record<string, { display_name: string | null; avatar_url: string | null }>>({})
   // Seed own profile immediately
-  profileCache.current[currentUserId] = { display_name: currentUserName, avatar_url: null }
+  profileCache.current[currentUserId] = { display_name: currentUserName, avatar_url: currentUserAvatar ?? null }
 
   const [fetchError, setFetchError] = useState('')
 

@@ -11,7 +11,7 @@ import { MessageSquare, Users, Bell } from 'lucide-react'
 
 type MainTab = 'chats' | 'people' | 'requests'
 
-export default function ChatroomClient({ userId, displayName }: { userId: string; displayName: string | null }) {
+export default function ChatroomClient({ userId, displayName, avatarUrl }: { userId: string; displayName: string | null; avatarUrl?: string | null }) {
   const [token, setToken] = useState<string | null>(null)
   const [rooms, setRooms] = useState<ChatRoom[]>([])
   const [activeRoom, setActiveRoom] = useState<ChatRoom | null>(null)
@@ -220,6 +220,7 @@ export default function ChatroomClient({ userId, displayName }: { userId: string
             roomAvatar={activeRoom.other_avatar_url}
             currentUserId={userId}
             currentUserName={displayName}
+            currentUserAvatar={avatarUrl}
             token={token}
             onNewMessage={(roomId, senderId, body, createdAt) => {
               setRooms(prev => prev.map(r => {

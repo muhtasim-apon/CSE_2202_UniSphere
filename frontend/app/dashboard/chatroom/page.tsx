@@ -29,7 +29,7 @@ export default async function ChatroomPage() {
       activeItem="chatroom"
       userRole={profile?.role}
     >
-      <ChatroomClient userId={user.id} displayName={`${firstName} ${lastName}`.trim() || null} />
+      <ChatroomClient userId={user.id} displayName={`${firstName} ${lastName}`.trim() || null} avatarUrl={profile?.avatar_url ?? null} />
     </DashboardShell>
   )
 }

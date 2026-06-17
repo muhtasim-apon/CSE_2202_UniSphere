@@ -73,4 +73,5 @@ frontend/   Next.js app (Sign Up, Sign In, Dashboard)
 backend/    FastAPI app (/api/me endpoint)
 Database/   SQL schema (do not modify)
 moye moye
+abd tui sera re 
 ```

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import type { ChatMessage, ChatReaction } from '@/app/lib/chatApi'
+import type { ChatMessage, ChatReaction, ChatAttachment } from '@/app/lib/chatApi'
 
 type Options = {
   roomId: string | null

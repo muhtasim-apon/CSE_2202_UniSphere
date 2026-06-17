@@ -2,7 +2,7 @@
 
 import { useState, useRef } from 'react'
 import { X, Trophy, Upload } from 'lucide-react'
-import { createHackathon, uploadHackathonMedia, skillNamesToIds } from '@/app/lib/achievementsApi'
+import { createHackathon, uploadHackathonMedia } from '@/app/lib/achievementsApi'
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
 const CURRENT_YEAR = new Date().getFullYear()
@@ -61,7 +61,6 @@ export default function AddHackathonModal({ token, onClose, onSuccess }: Props) 
     setSaving(true)
     setError('')
     try {
-      const skillIds = await skillNamesToIds(token, skillNames)
       const hack = await createHackathon(token, {
         title: title.trim(),
         organizer: organizer.trim() || undefined,
@@ -72,7 +71,7 @@ export default function AddHackathonModal({ token, onClose, onSuccess }: Props) 
         description: description.trim() || undefined,
         prize: prize.trim() || undefined,
         event_url: eventUrl.trim() || undefined,
-        skill_ids: skillIds,
+        skill_names: skillNames.length > 0 ? skillNames : undefined,
       })
       await Promise.all(mediaFiles.map(f => uploadHackathonMedia(token, hack.hackathon_id, f)))
       onSuccess()

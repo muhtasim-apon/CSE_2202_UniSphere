@@ -87,10 +87,10 @@ function paperToCard(p: ResearchPaper): AchievementCardData {
   }
 }
 
-type Props = { token: string; currentUserName: string }
+type Props = { token: string; currentUserName: string; initialTab?: Tab }
 
-export default function AchievementsFeed({ token, currentUserName }: Props) {
-  const [tab, setTab] = useState<Tab>('all')
+export default function AchievementsFeed({ token, currentUserName, initialTab = 'all' }: Props) {
+  const [tab, setTab] = useState<Tab>(initialTab)
   const [cards, setCards] = useState<AchievementCardData[]>([])
   const [loading, setLoading] = useState(true)
   const [addModal, setAddModal] = useState<'project' | 'certificate' | 'paper' | null>(null)

@@ -167,7 +167,7 @@ export default function ProjectsModuleCard() {
                 </div>
               )}
             </div>
-            <Link href="/dashboard/achievements" className="flex items-center gap-1 text-sm font-medium text-primary transition hover:underline">
+            <Link href="/dashboard/projects" className="flex items-center gap-1 text-sm font-medium text-primary transition hover:underline">
               View all <ChevronRight className="h-3.5 w-3.5" />
             </Link>
           </div>
@@ -207,11 +207,11 @@ export default function ProjectsModuleCard() {
 
         {/* Bottom pills */}
         <div className="flex gap-2">
-          <Link href="/dashboard/achievements?tab=projects" className="rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-text-muted transition hover:border-primary hover:text-primary">
+          <Link href="/dashboard/projects" className="rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-text-muted transition hover:border-primary hover:text-primary">
             My Projects
           </Link>
-          <Link href="/dashboard/achievements?tab=certificates" className="rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-text-muted transition hover:border-primary hover:text-primary">
-            My Certificates
+          <Link href="/dashboard/achievements" className="rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-text-muted transition hover:border-primary hover:text-primary">
+            My Achievements
           </Link>
         </div>
       </div>

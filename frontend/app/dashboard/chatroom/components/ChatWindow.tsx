@@ -19,7 +19,7 @@ type Props = {
   currentUserName: string | null
   currentUserAvatar?: string | null
   token: string
-  onNewMessage?: (roomId: string, senderId: string, body: string | null, createdAt: string) => void
+  onNewMessage?: (roomId: string, senderId: string, body: string | null, createdAt: string, attachmentType?: string | null) => void
 }
 
 export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserId, currentUserName, currentUserAvatar, token, onNewMessage }: Props) {
@@ -102,6 +102,13 @@ export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserI
 
   useChatRealtime({
     roomId,
+    onAttachment: (att) => {
+      setMessages(prev => prev.map(m =>
+        m.id === att.message_id
+          ? { ...m, attachments: m.attachments.some(a => a.id === att.id) ? m.attachments : [...m.attachments, att] }
+          : m
+      ))
+    },
     onMessage: ({ eventType, record }) => {
       if (eventType === 'INSERT') {
         setMessages(prev => {
@@ -135,14 +142,16 @@ export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserI
     setLoading(true)
     try {
       const msg = await sendMessage(roomId, { body: trimmed || undefined, reply_to: replyTo?.id, has_attachment: !!pendingFile }, token)
-      onNewMessage?.(roomId, currentUserId, msg.body, msg.created_at)
+      let attType: string | null = null
       if (pendingFile) {
         const att = await uploadChatAttachment(msg.id, pendingFile, token)
+        attType = att.file_type ?? null
         setMessages(prev => prev.map(m =>
           m.id === msg.id ? { ...m, attachments: [...m.attachments, att] } : m
         ))
         setPendingFile(null)
       }
+      onNewMessage?.(roomId, currentUserId, msg.body, msg.created_at, attType)
       setBody('')
       setReplyTo(null)
     } catch (e) { console.error(e) }
@@ -177,9 +186,9 @@ export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserI
         setLoading(true)
         try {
           const msg = await sendMessage(roomId, { has_attachment: true }, token)
-          onNewMessage?.(roomId, currentUserId, null, msg.created_at)
           const att = await uploadChatAttachment(msg.id, file, token)
           setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, attachments: [...m.attachments, att] } : m))
+          onNewMessage?.(roomId, currentUserId, null, msg.created_at, att.file_type ?? 'voicenote')
         } catch (e) { console.error(e) }
         finally { setLoading(false) }
       }

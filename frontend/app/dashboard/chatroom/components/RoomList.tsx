@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Plus, Hash, Users, BookOpen, MessageCircle } from 'lucide-react'
+import { Plus, Hash, Users, BookOpen, MessageCircle, Image, Video, Mic, Music, File } from 'lucide-react'
 import type { ChatRoom } from '@/app/lib/chatApi'
 import NewGroupModal from './NewGroupModal'
 import JoinRoomModal from './JoinRoomModal'
@@ -23,6 +23,22 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: 'advisor', label: 'Advisor', icon: <BookOpen size={13} /> },
   { id: 'group',   label: 'Groups',  icon: <Users size={13} /> },
 ]
+
+function AttachmentPreview({ type }: { type: string }) {
+  const map: Record<string, { icon: React.ReactNode; label: string }> = {
+    image:     { icon: <Image size={11} />,  label: 'Image' },
+    video:     { icon: <Video size={11} />,  label: 'Video' },
+    voicenote: { icon: <Mic size={11} />,    label: 'Voice note' },
+    audio:     { icon: <Music size={11} />,  label: 'Audio' },
+    file:      { icon: <File size={11} />,   label: 'File' },
+  }
+  const entry = map[type] ?? map.file
+  return (
+    <span className="flex items-center gap-1 text-muted italic">
+      {entry.icon} {entry.label}
+    </span>
+  )
+}
 
 function formatTime(iso: string) {
   const diff = Date.now() - new Date(iso).getTime()
@@ -125,8 +141,13 @@ export default function RoomList({ rooms, activeRoomId, onSelect, onNewRoom, tok
                 </div>
               </div>
               {room.last_message && (
-                <p className="text-xs text-muted truncate mt-0.5">
-                  {room.last_message.body ?? '(attachment)'}
+                <p className="text-xs truncate mt-0.5">
+                  {room.last_message.body
+                    ? <span className="text-muted">{room.last_message.body}</span>
+                    : room.last_message.attachment_type
+                      ? <AttachmentPreview type={room.last_message.attachment_type} />
+                      : <span className="text-muted italic">(attachment)</span>
+                  }
                 </p>
               )}
             </div>

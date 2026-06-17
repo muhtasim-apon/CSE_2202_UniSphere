@@ -344,13 +344,32 @@ async def list_rooms(authorization: Optional[str] = Header(default=None)):
         rid = room["id"]
         last_msg_res = (
             _supabase.table("chat_message")
-            .select("id, body, sender_id, created_at")
+            .select("id, body, sender_id, created_at, attachments:chat_message_attachment(file_type, mime_type)")
             .eq("room_id", rid)
             .order("created_at", desc=True)
             .limit(1)
             .execute()
         )
-        last_msg = last_msg_res.data[0] if last_msg_res.data else None
+        last_msg = None
+        if last_msg_res.data:
+            m = last_msg_res.data[0]
+            att = (m.get("attachments") or [None])[0]
+            att_type = None
+            if att:
+                ft = att.get("file_type", "")
+                mime = att.get("mime_type", "") or ""
+                if ft == "image": att_type = "image"
+                elif ft == "mp4" or mime.startswith("video/"): att_type = "video"
+                elif ft == "audio" or mime.startswith("audio/"):
+                    att_type = "voicenote" if "webm" in mime or "ogg" in mime else "audio"
+                else: att_type = "file"
+            last_msg = {
+                "id": m["id"],
+                "body": m["body"],
+                "sender_id": m["sender_id"],
+                "created_at": m["created_at"],
+                "attachment_type": att_type,
+            }
 
         last_read = membership_map[rid].get("last_read_at")
         unread = 0

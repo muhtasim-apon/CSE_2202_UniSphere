@@ -105,10 +105,23 @@ export default function ChatroomClient({ userId, displayName, avatarUrl }: { use
           setRooms(prev => prev.map(r =>
             r.id !== room.id ? r : {
               ...r,
-              last_message: { id: msg.id, body: msg.body, sender_id: msg.sender_id, created_at: msg.created_at },
+              last_message: { id: msg.id, body: msg.body, sender_id: msg.sender_id, created_at: msg.created_at, attachment_type: null },
               unread_count: (isActive || isOwn) ? 0 : (r.unread_count ?? 0) + 1,
             }
           ))
+          // If no body, attachment is uploading — re-fetch after a short delay to get attachment_type
+          if (!msg.body) {
+            setTimeout(() => {
+              const t = tokenRef.current
+              if (!t) return
+              getRooms(t).then(fresh => {
+                setRooms(prev => fresh.map(r => {
+                  const old = prev.find(p => p.id === r.id)
+                  return { ...r, unread_count: r.id === activeRoomRef.current?.id ? 0 : (old?.unread_count ?? r.unread_count) }
+                }))
+              }).catch(console.error)
+            }, 2000)
+          }
         })
         .subscribe()
     )
@@ -222,14 +235,14 @@ export default function ChatroomClient({ userId, displayName, avatarUrl }: { use
             currentUserName={displayName}
             currentUserAvatar={avatarUrl}
             token={token}
-            onNewMessage={(roomId, senderId, body, createdAt) => {
+            onNewMessage={(roomId, senderId, body, createdAt, attachmentType) => {
               setRooms(prev => prev.map(r => {
                 if (r.id !== roomId) return r
                 const isActive = activeRoomRef.current?.id === roomId
                 const isOwn = senderId === userId
                 return {
                   ...r,
-                  last_message: { id: '', body, sender_id: senderId, created_at: createdAt },
+                  last_message: { id: '', body, sender_id: senderId, created_at: createdAt, attachment_type: attachmentType ?? null },
                   unread_count: (isActive || isOwn) ? 0 : (r.unread_count ?? 0) + 1,
                 }
               }))

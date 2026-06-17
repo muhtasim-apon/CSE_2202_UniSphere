@@ -19,6 +19,7 @@ export type ChatRoom = {
     body: string | null
     sender_id: string
     created_at: string
+    attachment_type?: 'image' | 'video' | 'voicenote' | 'audio' | 'file' | null
   } | null
   unread_count?: number
   other_avatar_url?: string | null

@@ -8,9 +8,10 @@ type Options = {
   roomId: string | null
   onMessage: (event: { eventType: 'INSERT' | 'UPDATE' | 'DELETE'; record: ChatMessage }) => void
   onReaction: (event: { eventType: 'INSERT' | 'DELETE'; record: ChatReaction }) => void
+  onAttachment: (attachment: ChatAttachment) => void
 }
 
-export function useChatRealtime({ roomId, onMessage, onReaction }: Options) {
+export function useChatRealtime({ roomId, onMessage, onReaction, onAttachment }: Options) {
   const channelRef = useRef<ReturnType<ReturnType<typeof createClient>['channel']> | null>(null)
 
   useEffect(() => {
@@ -24,6 +25,13 @@ export function useChatRealtime({ roomId, onMessage, onReaction }: Options) {
         { event: '*', schema: 'public', table: 'chat_message', filter: `room_id=eq.${roomId}` },
         (payload: any) => {
           onMessage({ eventType: payload.eventType, record: payload.new ?? payload.old })
+        }
+      )
+      .on(
+        'postgres_changes' as any,
+        { event: 'INSERT', schema: 'public', table: 'chat_message_attachment' },
+        (payload: any) => {
+          onAttachment(payload.new)
         }
       )
       .on(

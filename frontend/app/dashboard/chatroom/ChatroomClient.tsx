@@ -242,7 +242,7 @@ export default function ChatroomClient({ userId, displayName, avatarUrl }: { use
                 const isOwn = senderId === userId
                 return {
                   ...r,
-                  last_message: { id: '', body, sender_id: senderId, created_at: createdAt, attachment_type: attachmentType ?? null },
+                  last_message: { id: '', body, sender_id: senderId, created_at: createdAt, attachment_type: (attachmentType ?? null) as 'audio' | 'video' | 'image' | 'file' | 'voicenote' | null },
                   unread_count: (isActive || isOwn) ? 0 : (r.unread_count ?? 0) + 1,
                 }
               }))

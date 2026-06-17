@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { Send, Paperclip, X } from 'lucide-react'
+import { Send, Paperclip, X, Mic, Square } from 'lucide-react'
 import {
   getMessages, sendMessage, editMessage, deleteMessage,
   uploadChatAttachment, addReaction, removeReaction, markRead,
@@ -39,6 +39,11 @@ export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserI
   profileCache.current[currentUserId] = { display_name: currentUserName, avatar_url: currentUserAvatar ?? null }
 
   const [fetchError, setFetchError] = useState('')
+  const [recording, setRecording] = useState(false)
+  const [recordingSecs, setRecordingSecs] = useState(0)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const load = useCallback(async (before?: string) => {
     if (!token) return
@@ -159,6 +164,43 @@ export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserI
     setMessages(prev => prev.filter(m => m.id !== msgId))
   }
 
+  async function startRecording() {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      const mr = new MediaRecorder(stream)
+      audioChunksRef.current = []
+      mr.ondataavailable = e => { if (e.data.size > 0) audioChunksRef.current.push(e.data) }
+      mr.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop())
+        const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
+        const file = new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' })
+        setLoading(true)
+        try {
+          const msg = await sendMessage(roomId, { has_attachment: true }, token)
+          onNewMessage?.(roomId, currentUserId, null, msg.created_at)
+          const att = await uploadChatAttachment(msg.id, file, token)
+          setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, attachments: [...m.attachments, att] } : m))
+        } catch (e) { console.error(e) }
+        finally { setLoading(false) }
+      }
+      mr.start()
+      mediaRecorderRef.current = mr
+      setRecording(true)
+      setRecordingSecs(0)
+      recordingTimerRef.current = setInterval(() => setRecordingSecs(s => s + 1), 1000)
+    } catch {
+      alert('Microphone access denied.')
+    }
+  }
+
+  function stopRecording() {
+    mediaRecorderRef.current?.stop()
+    mediaRecorderRef.current = null
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current)
+    setRecording(false)
+    setRecordingSecs(0)
+  }
+
   function startEdit(msg: ChatMessage) {
     setEditingMsg(msg)
     setBody(msg.body ?? '')
@@ -238,6 +280,17 @@ export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserI
         </div>
       )}
 
+      {/* Recording indicator */}
+      {recording && (
+        <div className="px-4 py-2 bg-card border-t border-border flex items-center gap-3">
+          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+          <span className="text-sm text-primary">Recording… {recordingSecs}s</span>
+          <button onClick={stopRecording} className="ml-auto flex items-center gap-1.5 text-xs text-red-500 hover:opacity-80">
+            <Square size={12} fill="currentColor" /> Stop & Send
+          </button>
+        </div>
+      )}
+
       {/* Composer */}
       <div className="px-4 py-3 bg-card border-t border-border flex items-end gap-2">
         <input type="file" ref={fileRef} className="hidden" onChange={e => setPendingFile(e.target.files?.[0] ?? null)} />
@@ -260,6 +313,15 @@ export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserI
           placeholder="Type a message…"
           className="flex-1 resize-none bg-background text-primary rounded-xl px-4 py-2 text-sm outline-none border border-border focus:border-accent transition-colors duration-theme max-h-32 placeholder:text-muted"
         />
+        {!body.trim() && !pendingFile && !editingMsg && (
+          <button
+            onClick={recording ? stopRecording : startRecording}
+            className={`p-2 rounded-xl transition-colors ${recording ? 'bg-red-500 text-white animate-pulse' : 'text-muted hover:text-accent hover:bg-secondary/30'}`}
+            title={recording ? 'Stop recording' : 'Record voice message'}
+          >
+            <Mic size={18} />
+          </button>
+        )}
         <motion.button
           whileTap={{ scale: 0.9 }}
           onClick={editingMsg ? handleEdit : handleSend}

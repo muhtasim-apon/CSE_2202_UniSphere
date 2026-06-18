@@ -15,11 +15,13 @@ import {
   RefreshCw,
   Search,
   Signal,
+  Users,
   X,
   type LucideIcon,
 } from 'lucide-react'
 import type { Article, ArticleSource, ArticleCategory } from './types'
 import { SOURCE_JOURNALS } from './types'
+import FacultyClient from './FacultyClient'
 
 const SOURCE_BADGE: Record<ArticleSource, string> = {
   arXiv: 'bg-purple-100 text-purple-700 dark:bg-purple-900/20 dark:text-purple-400',
@@ -82,6 +84,7 @@ function formatDate(d: string): string {
 
 export default function InfoTechClient({ articles }: { articles: Article[] }) {
   const router = useRouter()
+  const [activeTab, setActiveTab] = useState<'blogs' | 'faculty'>('blogs')
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set())
   const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set())
@@ -207,6 +210,57 @@ export default function InfoTechClient({ articles }: { articles: Article[] }) {
           </div>
         </div>
       </motion.div>
+
+      {/* Tab Navigation */}
+      <div className="flex gap-2 rounded-xl bg-card/50 p-1 border border-border w-fit">
+        <button
+          onClick={() => setActiveTab('blogs')}
+          className={`flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-all duration-200 ${
+            activeTab === 'blogs'
+              ? 'bg-primary text-white shadow-sm'
+              : 'text-text-muted hover:text-primary'
+          }`}
+        >
+          <Newspaper className="h-4 w-4" />
+          Tech Blogs
+        </button>
+        <button
+          onClick={() => setActiveTab('faculty')}
+          className={`flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-all duration-200 ${
+            activeTab === 'faculty'
+              ? 'bg-primary text-white shadow-sm'
+              : 'text-text-muted hover:text-primary'
+          }`}
+        >
+          <Users className="h-4 w-4" />
+          CSE Faculty
+          <span className="rounded-full bg-accent/20 px-1.5 py-0.5 text-[10px] font-bold text-accent">
+            DU
+          </span>
+        </button>
+      </div>
+
+      <AnimatePresence mode="wait">
+        {activeTab === 'faculty' && (
+          <motion.div
+            key="faculty"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            transition={{ duration: 0.2 }}
+          >
+            <FacultyClient />
+          </motion.div>
+        )}
+        {activeTab === 'blogs' && (
+          <motion.div
+            key="blogs"
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            transition={{ duration: 0.2 }}
+            className="space-y-6"
+          >
 
       {/* Error state */}
       {articles.length === 0 && (
@@ -536,6 +590,9 @@ export default function InfoTechClient({ articles }: { articles: Article[] }) {
           )}
         </>
       )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   )
 }

@@ -107,10 +107,10 @@ def _enrich_list(items: list, achievement_type: str, id_field: str) -> list:
     try:
         user_ids = list({item["user_id"] for item in items if item.get("user_id")})
         if user_ids:
-            profiles_res = _supabase.table("profiles").select("id, first_name, last_name").in_("id", user_ids).execute()
+            profiles_res = _supabase.table("profiles").select("id, first_name, last_name, avatar_url").in_("id", user_ids).execute()
             for row in (profiles_res.data or []):
                 name = f"{row.get('first_name') or ''} {row.get('last_name') or ''}".strip()
-                author_map[row["id"]] = name or "Unknown"
+                author_map[row["id"]] = {"name": name or "Unknown", "avatar": row.get("avatar_url") or None}
     except Exception:
         pass
 
@@ -135,7 +135,9 @@ def _enrich_list(items: list, achievement_type: str, id_field: str) -> list:
         item["reactions"] = reactions_map.get(tid, {})
         item["avg_rating"] = avg_map.get(tid)
         item["comment_count"] = comment_count_map.get(tid, 0)
-        item["author_name"] = author_map.get(item.get("user_id", ""), "Unknown")
+        author_info = author_map.get(item.get("user_id", ""), {})
+        item["author_name"] = author_info.get("name", "Unknown") if isinstance(author_info, dict) else author_info
+        item["author_avatar_url"] = author_info.get("avatar") if isinstance(author_info, dict) else None
         item["media"] = media_map.get(tid, [])
 
     return items
@@ -954,7 +956,23 @@ async def list_comments(
     limit = 20
     offset = (page - 1) * limit
     res = _supabase.table("achievement_comment").select("*").eq("achievement_type", achievement_type).eq("target_id", target_id).order("created_at").range(offset, offset + limit - 1).execute()
-    return {"comments": res.data or [], "page": page}
+    comments = res.data or []
+    # Enrich with author profile info
+    user_ids = list({c["user_id"] for c in comments if c.get("user_id")})
+    profile_map: dict = {}
+    if user_ids:
+        try:
+            pr = _supabase.table("profiles").select("id, first_name, last_name, avatar_url").in_("id", user_ids).execute()
+            for row in (pr.data or []):
+                name = f"{row.get('first_name') or ''} {row.get('last_name') or ''}".strip()
+                profile_map[row["id"]] = {"name": name or "User", "avatar": row.get("avatar_url") or None}
+        except Exception:
+            pass
+    for c in comments:
+        info = profile_map.get(c.get("user_id", ""), {})
+        c["author_name"] = info.get("name", "User")
+        c["author_avatar"] = info.get("avatar")
+    return {"comments": comments, "page": page}
 
 
 # ── SKILLS ENDPOINTS ──────────────────────────────────────────────────────────

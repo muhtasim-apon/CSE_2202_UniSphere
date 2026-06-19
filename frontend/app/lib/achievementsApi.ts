@@ -42,6 +42,7 @@ export type Project = {
   avg_rating?: number | null
   comment_count?: number
   author_name?: string
+  author_avatar_url?: string | null
   media?: MediaItem[]
 }
 
@@ -64,6 +65,7 @@ export type Certificate = {
   avg_rating?: number | null
   comment_count?: number
   author_name?: string
+  author_avatar_url?: string | null
   media?: MediaItem[]
 }
 
@@ -88,6 +90,7 @@ export type ResearchPaper = {
   avg_rating?: number | null
   comment_count?: number
   author_name?: string
+  author_avatar_url?: string | null
   media?: MediaItem[]
 }
 
@@ -111,6 +114,7 @@ export type Hackathon = {
   avg_rating?: number | null
   comment_count?: number
   author_name?: string
+  author_avatar_url?: string | null
   media?: MediaItem[]
 }
 
@@ -132,6 +136,9 @@ export type AchievementComment = {
   body: string
   created_at: string
   updated_at: string
+  // enriched by list_comments endpoint
+  author_name?: string
+  author_avatar?: string | null
 }
 
 export type AchievementRating = {

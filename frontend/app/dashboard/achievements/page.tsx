@@ -30,6 +30,7 @@ export default async function AchievementsPage() {
       <AchievementsFeed
         token={session?.access_token ?? ''}
         currentUserName={`${firstName} ${lastName}`.trim()}
+        currentUserAvatar={profile?.avatar_url}
       />
     </DashboardShell>
   )

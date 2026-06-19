@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { Code, ExternalLink, BookOpen, Star, MessageCircle, ChevronDown, ChevronUp, Send, X } from 'lucide-react'
-import { toggleReaction, postComment, rateAchievement, type AchievementComment } from '@/app/lib/achievementsApi'
+import { toggleReaction, postComment, rateAchievement, getComments, type AchievementComment } from '@/app/lib/achievementsApi'
 
 type AchievementType = 'project' | 'certificate' | 'research_paper'
 
@@ -55,6 +55,8 @@ type Props = {
   data: AchievementCardData
   token: string
   currentDbUserId?: string
+  currentUserName?: string
+  currentUserAvatar?: string | null
   onEdit?: () => void
 }
 
@@ -70,12 +72,13 @@ function formatRelative(iso: string): string {
   return new Date(iso).toLocaleDateString()
 }
 
-export default function AchievementCard({ data, token, currentDbUserId, onEdit }: Props) {
+export default function AchievementCard({ data, token, currentDbUserId, currentUserName, currentUserAvatar, onEdit }: Props) {
   const [expanded, setExpanded] = useState(false)
   const [commentsOpen, setCommentsOpen] = useState(false)
   const [commentText, setCommentText] = useState('')
   const [submittingComment, setSubmittingComment] = useState(false)
   const [localComments, setLocalComments] = useState<AchievementComment[]>(data.comments ?? [])
+  const [commentsLoaded, setCommentsLoaded] = useState(false)
   const [reactions, setReactions] = useState<Record<string, number>>(data.reactions ?? {})
   const [myReactions, setMyReactions] = useState<Set<string>>(new Set())
   const [avgRating, setAvgRating] = useState<number | null>(data.avgRating ?? null)
@@ -94,6 +97,14 @@ export default function AchievementCard({ data, token, currentDbUserId, onEdit }
     document.addEventListener('mousedown', onClickOutside)
     return () => document.removeEventListener('mousedown', onClickOutside)
   }, [])
+
+  useEffect(() => {
+    if (!commentsOpen || commentsLoaded) return
+    getComments(token, data.type, data.id).then(({ comments }) => {
+      setLocalComments(comments)
+      setCommentsLoaded(true)
+    }).catch(() => setCommentsLoaded(true))
+  }, [commentsOpen, commentsLoaded, token, data.type, data.id])
 
   const totalReactions = Object.values(reactions).reduce((a, b) => a + b, 0)
 
@@ -140,7 +151,11 @@ export default function AchievementCard({ data, token, currentDbUserId, onEdit }
     setSubmittingComment(true)
     try {
       const newComment = await postComment(token, data.type, data.id, commentText.trim())
+      // Attach current user info optimistically since backend returns raw row
+      newComment.author_name = currentUserName
+      newComment.author_avatar = currentUserAvatar ?? null
       setLocalComments(prev => [...prev, newComment])
+      setCommentsLoaded(true)
       setCommentText('')
     } catch {}
     setSubmittingComment(false)
@@ -351,23 +366,35 @@ export default function AchievementCard({ data, token, currentDbUserId, onEdit }
       {/* Comments section */}
       {commentsOpen && (
         <div className="mt-3 space-y-3 border-t border-border pt-3">
-          {localComments.map((c) => (
-            <div key={c.comment_id} className={`flex gap-2 ${c.parent_comment_id ? 'ml-8' : ''}`}>
-              <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-primary-light text-xs font-semibold text-primary">
-                U
-              </span>
-              <div className="flex-1 rounded-xl bg-background p-3">
-                <p className="mb-0.5 text-xs font-semibold text-text-primary">User #{c.user_id}</p>
-                <p className="text-sm text-text-primary">{c.body}</p>
-                <p className="mt-1 text-xs text-text-muted">{formatRelative(c.created_at)}</p>
+          {localComments.map((c) => {
+            const name = c.author_name || 'User'
+            const initial = name.charAt(0).toUpperCase()
+            return (
+              <div key={c.comment_id} className={`flex gap-2 ${c.parent_comment_id ? 'ml-8' : ''}`}>
+                {c.author_avatar ? (
+                  <img src={c.author_avatar} alt="" className="h-7 w-7 flex-shrink-0 rounded-full object-cover" />
+                ) : (
+                  <span className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full bg-primary-light text-xs font-semibold text-primary">
+                    {initial}
+                  </span>
+                )}
+                <div className="flex-1 rounded-xl bg-background p-3">
+                  <p className="mb-0.5 text-xs font-semibold text-text-primary">{name}</p>
+                  <p className="text-sm text-text-primary">{c.body}</p>
+                  <p className="mt-1 text-xs text-text-muted">{formatRelative(c.created_at)}</p>
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
 
           <div className="flex gap-2 pt-1">
-            <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-primary-light text-xs font-semibold text-primary">
-              Me
-            </span>
+            {currentUserAvatar ? (
+              <img src={currentUserAvatar} alt="" className="h-8 w-8 flex-shrink-0 rounded-full object-cover" />
+            ) : (
+              <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full bg-primary-light text-xs font-semibold text-primary">
+                {(currentUserName ?? 'Me').charAt(0).toUpperCase()}
+              </span>
+            )}
             <div className="flex flex-1 items-center gap-2 rounded-xl border border-border bg-background px-3 py-2">
               <input
                 type="text"

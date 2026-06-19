@@ -40,6 +40,7 @@ function projectToCard(p: Project): AchievementCardData {
     avgRating: p.avg_rating,
     commentCount: p.comment_count,
     authorName: p.author_name,
+    authorAvatar: p.author_avatar_url,
     media: p.media,
     relativeDate: p.created_at ? new Date(p.created_at).toLocaleDateString() : '',
     userId: p.user_id,
@@ -62,6 +63,7 @@ function certToCard(c: Certificate): AchievementCardData {
     avgRating: c.avg_rating,
     commentCount: c.comment_count,
     authorName: c.author_name,
+    authorAvatar: c.author_avatar_url,
     media: c.media,
     relativeDate: c.created_at ? new Date(c.created_at).toLocaleDateString() : '',
     userId: c.user_id,
@@ -81,15 +83,16 @@ function paperToCard(p: ResearchPaper): AchievementCardData {
     avgRating: p.avg_rating,
     commentCount: p.comment_count,
     authorName: p.author_name,
+    authorAvatar: p.author_avatar_url,
     media: p.media,
     relativeDate: p.created_at ? new Date(p.created_at).toLocaleDateString() : '',
     userId: p.user_id,
   }
 }
 
-type Props = { token: string; currentUserName: string; initialTab?: Tab }
+type Props = { token: string; currentUserName: string; currentUserAvatar?: string | null; initialTab?: Tab }
 
-export default function AchievementsFeed({ token, currentUserName, initialTab = 'all' }: Props) {
+export default function AchievementsFeed({ token, currentUserName, currentUserAvatar, initialTab = 'all' }: Props) {
   const [tab, setTab] = useState<Tab>(initialTab)
   const [cards, setCards] = useState<AchievementCardData[]>([])
   const [loading, setLoading] = useState(true)
@@ -198,7 +201,7 @@ export default function AchievementsFeed({ token, currentUserName, initialTab = 
       ) : (
         <div className="space-y-4">
           {cards.map(card => (
-            <AchievementCard key={`${card.type}-${card.id}`} data={card} token={token} />
+            <AchievementCard key={`${card.type}-${card.id}`} data={card} token={token} currentUserName={currentUserName} currentUserAvatar={currentUserAvatar} />
           ))}
         </div>
       )}

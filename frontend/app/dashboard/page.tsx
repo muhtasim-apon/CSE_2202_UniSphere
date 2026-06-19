@@ -2,25 +2,18 @@ import { redirect } from 'next/navigation'
 import {
   BookOpen,
   Calendar,
-  ExternalLink,
-  GraduationCap,
   Megaphone,
   MessageCircle,
   Newspaper,
-  Trophy,
 } from 'lucide-react'
 import { createClient } from '@/lib/supabase/server'
 import SignOutButton from './sign-out-button'
 import DashboardShell from './components/DashboardShell'
 import ModuleCard from './components/ModuleCard'
 import ProjectsModuleCard from './components/ProjectsModuleCard'
-import StreakWidget from './components/StreakWidget'
 import {
-  achievements,
   articles,
   chatMessages,
-  classModule,
-  streak,
   upcomingClasses,
 } from './mock-data'
 
@@ -106,7 +99,7 @@ export default async function DashboardPage() {
             icon={MessageCircle}
             iconBgClassName="bg-highlight/10"
             iconClassName="text-highlight"
-            viewAllHref="#"
+            viewAllHref="/dashboard/chatroom"
             viewAllLabel="Open chat"
           >
             <ul className="space-y-3">
@@ -130,50 +123,10 @@ export default async function DashboardPage() {
         {/* Row 2 */}
         <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
           <ProjectsModuleCard />
-
-          <ModuleCard
-            title="Achievements"
-            icon={Trophy}
-            iconBgClassName="bg-accent/10"
-            iconClassName="text-accent"
-            viewAllHref="#"
-          >
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-              {achievements.map((badge) => (
-                <div key={badge.id} className="flex flex-col items-center gap-2 text-center">
-                  <span className="flex h-12 w-12 items-center justify-center rounded-full bg-accent/10">
-                    <Trophy className="h-5 w-5 text-accent" />
-                  </span>
-                  <span className="text-xs font-medium text-text-muted">{badge.label}</span>
-                </div>
-              ))}
-            </div>
-          </ModuleCard>
         </div>
 
-        {/* Banner */}
-        <a
-          href={classModule.href}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex flex-col gap-3 rounded-card border border-border bg-card p-4 shadow-[var(--shadow-card)] transition hover:shadow-md sm:flex-row sm:items-center sm:justify-between"
-        >
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary-light">
-              <GraduationCap className="h-5 w-5 text-primary" />
-            </span>
-            <p className="text-sm font-medium text-text-primary">
-              On {classModule.teacher} Module — {classModule.className}
-            </p>
-          </div>
-          <span className="flex items-center gap-1 self-start rounded-lg bg-cta px-4 py-2 text-sm font-semibold text-cta-text transition hover:opacity-90 sm:self-auto">
-            Open in Google Classroom
-            <ExternalLink className="h-4 w-4" />
-          </span>
-        </a>
-
         {/* Row 3 */}
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-2">
           <ModuleCard
             title="Information & Tech"
             icon={Newspaper}
@@ -198,7 +151,7 @@ export default async function DashboardPage() {
             icon={BookOpen}
             iconBgClassName="bg-highlight/10"
             iconClassName="text-highlight"
-            viewAllHref="#"
+            viewAllHref="/dashboard/classes"
           >
             <ul className="space-y-2">
               {upcomingClasses.map((item) => (
@@ -216,11 +169,6 @@ export default async function DashboardPage() {
             </ul>
           </ModuleCard>
 
-          <StreakWidget
-            days={streak.days}
-            weeklyGoalLabel={streak.weeklyGoalLabel}
-            weeklyProgress={streak.weeklyProgress}
-          />
         </div>
       </div>
     </DashboardShell>

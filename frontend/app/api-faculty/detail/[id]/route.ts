@@ -7,7 +7,8 @@ import {
 
 const BASE_URL = 'https://www.du.ac.bd'
 
-export const revalidate = 7200
+// force-dynamic: never cache this route — a cached error locks out for 2 h
+export const dynamic = 'force-dynamic'
 
 // ── Helpers ───────────────────────────────────────────────────
 
@@ -33,6 +34,11 @@ function makeAbsolute(url: string, base: string): string {
   if (cleaned.startsWith('//')) return 'https:' + cleaned
   if (cleaned.startsWith('/')) return base + cleaned
   return base + '/' + cleaned
+}
+
+function proxyPhoto(url: string): string {
+  if (!url) return ''
+  return `/api-faculty/photo?url=${encodeURIComponent(url)}`
 }
 
 function between(html: string, start: string, end: string): string {
@@ -241,23 +247,24 @@ function parseFacultyDetail(
   id: string,
   baseUrl: string
 ): FacultyDetail {
-  // Photo: img with alt="Thumb" or alt containing "photo"
-  let photoUrl = ''
+  // Photo: try multiple patterns in priority order
+  let rawPhotoUrl = ''
   const photoPatterns = [
     /<img[^>]+alt="(?:Thumb|thumb|Photo|photo|profile|Profile)"[^>]+src="([^"]+)"/i,
     /<img[^>]+src="([^"]+)"[^>]+alt="(?:Thumb|thumb|Photo|photo|profile|Profile)"/i,
-    // DU typically has faculty image in a known path
     /<img[^>]+src="([^"]*faculty_image[^"]+)"/i,
     /<img[^>]+src="([^"]*\/img\/cse_[^"]+)"/i,
     /<img[^>]+src="([^"]*\/upload\/img\/[^"]+)"/i,
+    /<img[^>]+src="([^"]*\/public\/img\/[^"]+)"/i,
   ]
   for (const pat of photoPatterns) {
     const m = html.match(pat)
     if (m) {
-      photoUrl = makeAbsolute(m[1], baseUrl)
+      rawPhotoUrl = makeAbsolute(m[1], baseUrl)
       break
     }
   }
+  const photoUrl = proxyPhoto(rawPhotoUrl)
 
   // Name: first h4 in page content (skip nav/header)
   const contentStart = html.indexOf('<h4')
@@ -342,17 +349,27 @@ export async function GET(
 
   try {
     const res = await fetch(url, {
+      cache: 'no-store',
       headers: {
         'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36',
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
         Accept:
-          'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
         Referer: 'https://www.du.ac.bd/body/FacultyMembers/CSE',
+        'Cache-Control': 'no-cache',
+        Pragma: 'no-cache',
+        Connection: 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'same-origin',
       },
-      next: { revalidate: 7200 },
     })
 
     if (!res.ok) {
+      console.error(`DU detail page returned ${res.status} for id=${id}`)
       return NextResponse.json(
         { error: `DU returned ${res.status}` },
         { status: 200 }

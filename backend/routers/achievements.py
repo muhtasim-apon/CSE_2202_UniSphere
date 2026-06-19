@@ -1121,6 +1121,35 @@ async def delete_hackathon(hackathon_id: int, authorization: Optional[str] = Hea
     _supabase.table("hackathon").delete().eq("hackathon_id", hackathon_id).execute()
 
 
+class AdvisorUpdateRequest(BaseModel):
+    advisor_name: Optional[str] = Field(default=None, max_length=120)
+    advisor_user_id: Optional[int] = None
+
+
+@router.patch("/projects/{project_id}/advisor")
+async def update_project_advisor(
+    project_id: int,
+    body: AdvisorUpdateRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    user = await _auth(authorization)
+    db_user_id = _user_id(user)
+    existing = _supabase.table("project").select("user_id").eq("project_id", project_id).maybe_single().execute()
+    if not existing or not existing.data:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if existing.data["user_id"] != db_user_id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    update_data: dict = {}
+    if body.advisor_name is not None:
+        update_data["advisor_name"] = body.advisor_name or None
+    if body.advisor_user_id is not None:
+        update_data["advisor_user_id"] = body.advisor_user_id
+    elif "advisor_user_id" in body.model_fields_set:
+        update_data["advisor_user_id"] = None
+    res = _supabase.table("project").update(update_data).eq("project_id", project_id).execute()
+    return res.data[0]
+
+
 @router.post("/hackathons/{hackathon_id}/media", status_code=201)
 async def upload_hackathon_media(
     hackathon_id: int,

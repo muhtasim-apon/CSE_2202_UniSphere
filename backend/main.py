@@ -12,20 +12,30 @@ load_dotenv()
 
 from routers.achievements import router as achievements_router  # noqa: E402
 from routers.chat import router as chat_router  # noqa: E402
+from routers.classes import router as classes_router, profile_router  # noqa: E402
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+# Google OAuth — set in .env
+# GOOGLE_CLIENT_ID=
+# GOOGLE_CLIENT_SECRET=
+# GOOGLE_REDIRECT_URI=http://localhost:3000/dashboard/classes
 
 supabase = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    for bucket in ("notice-attachments", "achievement-media", "chat-attachments"):
+    for bucket, size in [
+        ("notice-attachments", 52428800),
+        ("achievement-media",  52428800),
+        ("chat-attachments",   52428800),
+        ("class-resources",    2147483648),   # 2 GB
+    ]:
         try:
             supabase.storage.create_bucket(
                 bucket,
-                options={"public": True, "file_size_limit": 52428800},
+                options={"public": True, "file_size_limit": size},
             )
         except Exception:
             pass  # bucket already exists
@@ -36,6 +46,8 @@ app = FastAPI(lifespan=lifespan)
 
 app.include_router(achievements_router)
 app.include_router(chat_router)
+app.include_router(classes_router)
+app.include_router(profile_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -48,11 +60,11 @@ app.add_middleware(
 # Fields rejected by the DB guard triggers for self-service updates
 # (trg_student_profile_guard / trg_instructor_profile_guard in profile_feature.sql)
 STUDENT_LOCKED_FIELDS = {
-    "profile_id", "program_id", "student_roll", "admission_date",
+    "profile_id", "program_id", "student_roll",
     "batch_year", "current_semester", "cgpa", "total_credits", "is_active",
 }
 INSTRUCTOR_LOCKED_FIELDS = {
-    "profile_id", "dept_id", "employee_id", "hire_date", "designation", "is_active",
+    "profile_id", "dept_id", "employee_id", "designation", "is_active",
 }
 
 

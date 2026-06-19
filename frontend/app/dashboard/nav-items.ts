@@ -10,8 +10,6 @@ export const navItems: NavItem[] = [
   { id: 'chatroom', label: 'Chatroom', href: '/dashboard/chatroom' },
   { id: 'projects', label: 'Projects', href: '/dashboard/projects' },
   { id: 'info-tech', label: 'Info & Tech', href: '/dashboard/info-tech' },
-  { id: 'classes', label: 'Classes', href: '#' },
-  { id: 'achievements', label: 'Achievements', href: '#' },
+  { id: 'classes', label: 'Classes', href: '/dashboard/classes' },
   { id: 'profile', label: 'Profile', href: '/dashboard/profile' },
-  { id: 'settings', label: 'Settings', href: '#' },
 ]

@@ -33,6 +33,11 @@ function makeAbsolute(url: string, base: string): string {
   return base + '/' + cleaned
 }
 
+function proxyPhoto(url: string): string {
+  if (!url) return ''
+  return `/api-faculty/photo?url=${encodeURIComponent(url)}`
+}
+
 function parseFacultyList(html: string, baseUrl: string): FacultyMember[] {
   const members: FacultyMember[] = []
   const seen = new Set<string>()
@@ -46,26 +51,34 @@ function parseFacultyList(html: string, baseUrl: string): FacultyMember[] {
     if (seen.has(id)) continue
     seen.add(id)
 
-    // Look at HTML context before this link (up to 1500 chars back)
-    const ctxStart = Math.max(0, linkMatch.index - 1500)
-    const context = html.slice(ctxStart, linkMatch.index + 200)
+    // Look at HTML context 2000 chars BEFORE and 800 chars AFTER the link
+    const ctxStart = Math.max(0, linkMatch.index - 2000)
+    const ctxEnd = Math.min(html.length, linkMatch.index + 800)
+    const context = html.slice(ctxStart, ctxEnd)
 
-    // Photo: any img in the context block
+    // Photo: find img whose src contains common DU photo path patterns
     let photoUrl = ''
-    const imgMatch =
-      context.match(/<img[^>]+src="([^"]+)"[^>]*>/i) ||
-      context.match(/<img[^>]+src='([^']+)'[^>]*>/i)
-    if (imgMatch) {
-      const src = imgMatch[1]
-      // Skip tiny icons / logos (common false positives on DU site)
-      if (
-        !src.includes('logo') &&
-        !src.includes('icon') &&
-        !src.includes('banner') &&
-        !src.includes('btn') &&
-        src.length > 10
-      ) {
+    const imgMatches = [
+      ...context.matchAll(/<img[^>]+src=["']([^"']+)["'][^>]*>/gi),
+    ]
+    for (const m of imgMatches) {
+      const src = m[1]
+      // Prefer paths that look like actual faculty photos
+      const looksLikePhoto =
+        src.includes('faculty_image') ||
+        src.includes('cse_') ||
+        src.includes('/upload/img/') ||
+        src.includes('/public/img/')
+      const isNoise =
+        src.includes('logo') ||
+        src.includes('icon') ||
+        src.includes('banner') ||
+        src.includes('btn') ||
+        src.includes('arrow') ||
+        src.length < 10
+      if (!isNoise && (looksLikePhoto || (!photoUrl && src.length > 10))) {
         photoUrl = makeAbsolute(src, baseUrl)
+        if (looksLikePhoto) break // prefer the specific match
       }
     }
 
@@ -130,7 +143,7 @@ function parseFacultyList(html: string, baseUrl: string): FacultyMember[] {
       designation,
       designationRank: normalizeDesignation(designation),
       department: 'CSE',
-      photoUrl,
+      photoUrl: proxyPhoto(photoUrl),   // route through our proxy
       email,
       phone,
       officeRoom: '',

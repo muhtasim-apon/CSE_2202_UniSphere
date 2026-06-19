@@ -39,6 +39,10 @@ export default function AddProjectModal({ token, onClose, onSuccess }: Props) {
   const [mediaFiles, setMediaFiles] = useState<File[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // Advisor
+  const [advisorType, setAdvisorType] = useState<'none' | 'external' | 'internal'>('none')
+  const [advisorName, setAdvisorName] = useState('')
+
   function onThumbnailChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
     if (!f) return
@@ -91,6 +95,8 @@ export default function AddProjectModal({ token, onClose, onSuccess }: Props) {
         is_current: isCurrent,
         associated_with: associatedWith || undefined,
         skill_names: skillNames,
+        advisor_name: advisorType === 'external' && advisorName ? advisorName : null,
+        advisor_user_id: null,
       })
 
       await Promise.all(mediaFiles.map(f => uploadProjectMedia(token, project.project_id, f)))
@@ -246,6 +252,36 @@ export default function AddProjectModal({ token, onClose, onSuccess }: Props) {
                     </span>
                   ))}
                 </div>
+              )}
+            </div>
+
+            {/* Advisor */}
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-text-primary">Project Advisor (Optional)</label>
+              <div className="flex gap-2 mb-2">
+                {(['none', 'external', 'internal'] as const).map(t => (
+                  <button
+                    key={t}
+                    onClick={() => setAdvisorType(t)}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold border transition ${
+                      advisorType === t ? 'border-primary bg-primary/10 text-primary' : 'border-border text-text-muted hover:border-primary'
+                    }`}
+                  >
+                    {t === 'none' ? 'None' : t === 'external' ? 'External' : 'Internal (System User)'}
+                  </button>
+                ))}
+              </div>
+              {advisorType === 'external' && (
+                <input
+                  type="text"
+                  value={advisorName}
+                  onChange={e => setAdvisorName(e.target.value)}
+                  placeholder="Dr. John Smith, MIT"
+                  className="w-full rounded-xl border border-border bg-background px-4 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:border-primary focus:outline-none"
+                />
+              )}
+              {advisorType === 'internal' && (
+                <p className="text-xs text-text-muted">Internal advisor linking via user ID — available after project creation through the Advisor edit option.</p>
               )}
             </div>
 

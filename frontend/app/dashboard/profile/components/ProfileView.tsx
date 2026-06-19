@@ -2,11 +2,13 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Pencil, User, X } from 'lucide-react'
+import { Pencil, User, X, RefreshCw, CheckCircle2 } from 'lucide-react'
+import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import ModuleCard from '../../components/ModuleCard'
 import ProfilePhotoUpload from './ProfilePhotoUpload'
 import { validateName, validatePhone, validateAddress, validateBio, toLocalPhone } from '@/lib/validation'
+import { updateHireDate, recalculateCGPA } from '@/app/lib/classesApi'
 
 type Gender = 'Male' | 'Female' | 'Other'
 
@@ -96,6 +98,50 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
   const [officeLocation, setOfficeLocation] = useState(instructor?.office_location ?? '')
   const [specialization, setSpecialization] = useState(instructor?.specialization ?? '')
   const [bio, setBio] = useState(instructor?.bio ?? '')
+
+  // Editable date fields
+  const [hireDate, setHireDate] = useState(instructor?.hire_date ?? '')
+  const [dateEditMode, setDateEditMode] = useState(false)
+  const [dateSaving, setDateSaving] = useState(false)
+  const [dateMsg, setDateMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
+
+  // CGPA recalc
+  const [cgpaVal, setCgpaVal] = useState(student?.cgpa ?? 0)
+  const [cgpaRecalc, setCgpaRecalc] = useState(false)
+  const [cgpaMsg, setCgpaMsg] = useState<string | null>(null)
+
+  async function saveDateField() {
+    const supabase = createClient()
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session?.access_token) return
+    setDateSaving(true)
+    setDateMsg(null)
+    try {
+      await updateHireDate(session.access_token, hireDate)
+      setDateMsg({ type: 'ok', text: 'Hire date updated.' })
+      setDateEditMode(false)
+      router.refresh()
+    } catch (e: unknown) {
+      setDateMsg({ type: 'err', text: e instanceof Error ? e.message : 'Failed to update date.' })
+    }
+    setDateSaving(false)
+  }
+
+  async function handleCgpaRecalc() {
+    const supabase = createClient()
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session?.access_token) return
+    setCgpaRecalc(true)
+    setCgpaMsg(null)
+    try {
+      const res = await recalculateCGPA(session.access_token)
+      setCgpaVal(res.new_cgpa)
+      setCgpaMsg(`Updated to ${res.new_cgpa.toFixed(2)}`)
+    } catch {
+      setCgpaMsg('No exam marks found yet.')
+    }
+    setCgpaRecalc(false)
+  }
 
   const fullName = `${initialProfile.first_name} ${initialProfile.last_name}`
   const initials = `${initialProfile.first_name.charAt(0)}${initialProfile.last_name.charAt(0) || ''}`.toUpperCase()
@@ -241,7 +287,28 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
             <InfoField label="Department" value={student.dept_name} />
             <InfoField label="Batch Year" value={String(student.batch_year)} />
             <InfoField label="Current Semester" value={String(student.current_semester)} />
-            <InfoField label="CGPA" value={Number(student.cgpa).toFixed(2)} />
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">CGPA</p>
+              <div className="mt-1 flex items-center gap-2">
+                <span className={`text-sm font-semibold ${Number(cgpaVal) === 0 ? 'text-muted' : 'text-text-primary'}`}>
+                  {Number(cgpaVal).toFixed(2)}
+                </span>
+                <button
+                  onClick={handleCgpaRecalc}
+                  disabled={cgpaRecalc}
+                  title="Recalculate from exam marks"
+                  className="text-muted hover:text-primary transition"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${cgpaRecalc ? 'animate-spin' : ''}`} />
+                </button>
+              </div>
+              {Number(cgpaVal) === 0 && (
+                <Link href="/dashboard/classes" className="text-xs text-accent hover:underline mt-0.5 block">
+                  Add exam marks →
+                </Link>
+              )}
+              {cgpaMsg && <p className="text-xs text-emerald-600 mt-0.5">{cgpaMsg}</p>}
+            </div>
             <InfoField label="Total Credits" value={String(student.total_credits)} />
             <InfoField label="Joined" value={new Date(student.account_created_at).toLocaleDateString()} />
             <InfoField label="Status" value={student.is_active ? 'Active' : 'Inactive'} />
@@ -251,7 +318,38 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
             <InfoField label="Employee ID" value={instructor.employee_id} />
             <InfoField label="Designation" value={instructor.designation} />
             <InfoField label="Department" value={instructor.dept_name} />
-            <InfoField label="Hire Date" value={new Date(instructor.hire_date).toLocaleDateString()} />
+            {/* Editable hire date */}
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Hire Date</p>
+              {dateEditMode && role === 'instructor' ? (
+                <div className="mt-1 flex items-center gap-1">
+                  <input
+                    type="date"
+                    value={hireDate}
+                    onChange={e => setHireDate(e.target.value)}
+                    className="rounded border border-border bg-background px-2 py-1 text-xs focus:border-accent focus:outline-none"
+                  />
+                  <button onClick={saveDateField} disabled={dateSaving} className="text-accent hover:text-primary">
+                    <CheckCircle2 className="h-4 w-4" />
+                  </button>
+                  <button onClick={() => { setDateEditMode(false); setDateMsg(null) }} className="text-muted hover:text-primary">
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-1 flex items-center gap-1.5">
+                  <span className="text-sm text-text-primary">
+                    {hireDate ? new Date(hireDate).toLocaleDateString() : '—'}
+                  </span>
+                  <button onClick={() => setDateEditMode(true)} className="text-muted hover:text-primary transition">
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
+              {dateMsg && (
+                <p className={`text-xs mt-0.5 ${dateMsg.type === 'ok' ? 'text-emerald-600' : 'text-red-500'}`}>{dateMsg.text}</p>
+              )}
+            </div>
             <InfoField label="Status" value={instructor.is_active ? 'Active' : 'Inactive'} />
           </div>
         ) : null}

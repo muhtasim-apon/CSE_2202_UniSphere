@@ -31,6 +31,8 @@ export type Project = {
   end_year: number | null
   is_current: boolean
   associated_with: string | null
+  advisor_name: string | null
+  advisor_user_id: number | null
   is_published: boolean
   created_at: string
   updated_at: string
@@ -470,6 +472,20 @@ export async function deleteHackathon(token: string, hackathonId: number): Promi
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
   })
+}
+
+export async function updateProjectAdvisor(
+  token: string,
+  projectId: number,
+  advisor_name: string | null,
+  advisor_user_id: number | null,
+): Promise<Project> {
+  const res = await apiFetch(`${BASE}/api/achievements/projects/${projectId}/advisor`, {
+    method: 'PATCH',
+    headers: authHeader(token),
+    body: JSON.stringify({ advisor_name, advisor_user_id }),
+  })
+  return res.json()
 }
 
 export async function uploadHackathonMedia(token: string, hackathonId: number, file: File): Promise<MediaRecord> {

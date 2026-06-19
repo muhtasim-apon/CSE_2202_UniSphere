@@ -105,7 +105,7 @@ function JoinCourseModal({ token, onClose, onSuccess }: { token: string; onClose
     try {
       const res = await joinManualCourse(token, code.toUpperCase())
       const c = res.course
-      const instr = (c as Record<string, unknown>).instructor as Record<string, string> | undefined
+      const instr = (c as unknown as Record<string, unknown>).instructor as Record<string, string> | undefined
       setJoined({ course_name: c.course_name, instructor: instr ? `${instr.first_name} ${instr.last_name}` : undefined })
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to join course')
@@ -155,7 +155,7 @@ function CourseDetail({ token, course, role, onBack }: { token: string; course: 
   const [copied, setCopied] = useState<'code' | 'link' | null>(null)
 
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
-  const joinLink = `${origin}/dashboard/classes?join=${(course as Record<string, unknown>).join_link_token || ''}`
+  const joinLink = `${origin}/dashboard/classes?join=${(course as unknown as Record<string, unknown>).join_link_token || ''}`
 
   function copy(text: string, type: 'code' | 'link') {
     navigator.clipboard.writeText(text)
@@ -202,7 +202,7 @@ function CourseDetail({ token, course, role, onBack }: { token: string; course: 
                 {copied === 'code' ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
               </button>
             </div>
-            {(course as Record<string, unknown>).join_link_token && (
+            {!!(course as unknown as Record<string, unknown>).join_link_token && (
               <button
                 onClick={() => copy(joinLink, 'link')}
                 className="flex items-center gap-1.5 rounded-xl border border-border bg-background px-3 py-2 text-muted hover:border-accent hover:text-accent transition"
@@ -240,7 +240,7 @@ function CourseDetail({ token, course, role, onBack }: { token: string; course: 
               <StudentsPanel
                 token={token}
                 courseId={course.manual_course_id}
-                joinLinkToken={(course as Record<string, unknown>).join_link_token as string || ''}
+                joinLinkToken={(course as unknown as Record<string, unknown>).join_link_token as string || ''}
                 role={role}
               />
             )}
@@ -263,7 +263,7 @@ function CourseCard({ course, role, onClick, copiedCode, onCopyCode }: {
   copiedCode: string | null
   onCopyCode: (code: string) => void
 }) {
-  const enrollCount = (course as Record<string, unknown>).enrollment_count as number || 0
+  const enrollCount = (course as unknown as Record<string, unknown>).enrollment_count as number || 0
   const instr = course.instructor as Record<string, string> | undefined
 
   return (

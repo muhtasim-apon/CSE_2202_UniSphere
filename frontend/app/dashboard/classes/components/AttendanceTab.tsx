@@ -190,7 +190,7 @@ function TeacherView({ token }: { token: string }) {
           </div>
           <div className="space-y-2">
             {sessionResult.records.map((r) => {
-              const student = (r as Record<string, unknown>).student as Record<string, string> | undefined
+              const student = (r as unknown as Record<string, unknown>).student as Record<string, string> | undefined
               const name = student ? `${student.first_name} ${student.last_name}` : `Student ${r.student_id}`
               const roll = student?.student_roll
               const currentStatus = statusMap[r.student_id] || 'Present'

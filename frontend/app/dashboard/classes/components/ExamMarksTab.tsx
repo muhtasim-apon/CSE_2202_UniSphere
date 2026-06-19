@@ -352,8 +352,8 @@ function ExamCard({ exam, token, role, onRefresh }: { exam: Exam; token: string;
             {exam.semester && (
               <p className="text-xs text-muted">Semester: {exam.semester}</p>
             )}
-            {(exam as Record<string, unknown>).description && (
-              <p className="text-xs text-muted mt-1">{(exam as Record<string, unknown>).description as string}</p>
+            {!!(exam as unknown as Record<string, unknown>).description && (
+              <p className="text-xs text-muted mt-1">{(exam as unknown as Record<string, unknown>).description as string}</p>
             )}
           </div>
         )}

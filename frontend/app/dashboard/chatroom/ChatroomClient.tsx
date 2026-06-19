@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
-import { getRooms, openAdvisorRoom, type ChatRoom } from '@/app/lib/chatApi'
+import { getRooms, getRequests, openAdvisorRoom, type ChatRoom } from '@/app/lib/chatApi'
 import RoomList from './components/RoomList'
 import ChatWindow from './components/ChatWindow'
 import PeoplePanel from './components/PeoplePanel'
@@ -32,6 +32,7 @@ export default function ChatroomClient({ userId, displayName, avatarUrl }: { use
       setToken(t)
       tokenRef.current = t
       getRooms(t).then(setRooms).catch(console.error)
+      getRequests(t).then(reqs => setPendingCount(reqs.length)).catch(console.error)
     })
 
     // Refresh token whenever Supabase silently refreshes the session
@@ -134,10 +135,31 @@ export default function ChatroomClient({ userId, displayName, avatarUrl }: { use
     setRooms(prev => prev.map(r => r.id === room.id ? { ...r, unread_count: 0 } : r))
   }
 
-  function handleNewRoom(room: ChatRoom) {
-    setRooms(prev => prev.some(r => r.id === room.id) ? prev : [room, ...prev])
-    selectRoom(room)
-    setMainTab('chats')
+  async function handleNewRoom(room: ChatRoom, switchTab = true) {
+    if (switchTab) setMainTab('chats')
+    // Fetch enriched rooms first so title/avatar are correct from the start
+    const t = tokenRef.current
+    let enrichedRoom = room
+    if (t) {
+      try {
+        const fresh = await getRooms(t)
+        setRooms(fresh)
+        enrichedRoom = fresh.find(r => r.id === room.id) ?? room
+      } catch {
+        setRooms(prev => prev.some(r => r.id === room.id) ? prev : [room, ...prev])
+      }
+    } else {
+      setRooms(prev => prev.some(r => r.id === room.id) ? prev : [room, ...prev])
+    }
+    // Only update activeRoom if it's a different room — prevents ChatWindow remount
+    if (activeRoomRef.current?.id !== enrichedRoom.id) {
+      selectRoom(enrichedRoom)
+    } else {
+      // Same room — just refresh the metadata without switching
+      setRooms(prev => prev.map(r => r.id === enrichedRoom.id ? enrichedRoom : r))
+      activeRoomRef.current = enrichedRoom
+      setActiveRoom(enrichedRoom)
+    }
   }
 
   async function handleOpenAdvisor() {
@@ -205,7 +227,7 @@ export default function ChatroomClient({ userId, displayName, avatarUrl }: { use
             />
           )}
           {mainTab === 'people' && (
-            <PeoplePanel token={token} onOpenRoom={setActiveRoom} />
+            <PeoplePanel token={token} onOpenRoom={room => handleNewRoom(room, false)} />
           )}
           {mainTab === 'requests' && (
             <RequestsPanel
@@ -228,13 +250,22 @@ export default function ChatroomClient({ userId, displayName, avatarUrl }: { use
       <div className="flex-1 overflow-hidden flex flex-col min-h-0">
         {activeRoom ? (
           <ChatWindow
+            key={activeRoom.id}
             roomId={activeRoom.id}
+            roomType={activeRoom.type}
             roomTitle={activeRoom.title ?? (activeRoom.type === 'group' ? 'Group Chat' : 'Advisor Chat')}
             roomAvatar={activeRoom.other_avatar_url}
+            roomCode={activeRoom.room_code}
+            roomCreatedBy={activeRoom.created_by}
             currentUserId={userId}
             currentUserName={displayName}
             currentUserAvatar={avatarUrl}
             token={token}
+            onRoomDeleted={(rid) => {
+              setRooms(prev => prev.filter(r => r.id !== rid))
+              setActiveRoom(null)
+              activeRoomRef.current = null
+            }}
             onNewMessage={(roomId, senderId, body, createdAt, attachmentType) => {
               setRooms(prev => prev.map(r => {
                 if (r.id !== roomId) return r

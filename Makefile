@@ -14,9 +14,9 @@
 ifeq ($(OS),Windows_NT)
     PYTHON      := python
     # Paths relative to project root (used for install)
-    PIP         := backend/venv/Scripts/pip.exe
+    PIP         := backend/venv/bin/pip.exe
     # Path relative to backend/ dir (used after "cd backend &&")
-    UVICORN     := venv/Scripts/uvicorn.exe
+    UVICORN     := venv/bin/uvicorn.exe
     # npm.cmd avoids the "C:/Program Files/nodejs/npm" spaces issue
     NPM         := npm.cmd
     MKDIR       := mkdir
@@ -86,12 +86,16 @@ frontend: ## Start the Next.js dev server (http://localhost:3000)
 
 backend: ## Start the FastAPI dev server (http://localhost:8000)
 	@echo "[backend] Starting FastAPI..."
-	cd $(BACKEND_DIR) && $(UVICORN) main:app --reload --host 0.0.0.0 --port 8000
+	cd $(BACKEND_DIR) && venv\bin\uvicorn.exe main:app --reload --host 0.0.0.0 --port 8000
 
 # ── Clean ────────────────────────────────────────────────────
 
 clean: ## Remove node_modules, .next, venv, and __pycache__
 	@echo "Cleaning build artifacts..."
+ifeq ($(OS),Windows_NT)
+	powershell -NoProfile -Command "$$ErrorActionPreference='SilentlyContinue'; Remove-Item -LiteralPath '$(FRONTEND_DIR)/node_modules','$(FRONTEND_DIR)/.next','$(BACKEND_DIR)/venv','$(BACKEND_DIR)/__pycache__' -Recurse -Force; exit 0"
+else
 	rm -rf $(FRONTEND_DIR)/node_modules $(FRONTEND_DIR)/.next
 	rm -rf $(BACKEND_DIR)/venv $(BACKEND_DIR)/__pycache__
+endif
 	@echo "Clean done. Run 'make install' to reinstall."

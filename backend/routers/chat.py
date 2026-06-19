@@ -70,7 +70,7 @@ class DirectRoomRequest(BaseModel):
 
 class GroupRoomRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
-    member_ids: list[str] = Field(min_length=1)
+    member_emails: list[str] = Field(default=[])
     password: Optional[str] = None
 
 class JoinRoomRequest(BaseModel):
@@ -501,13 +501,26 @@ async def create_group_room(
     room = room_res.data[0]
     room_id = room["id"]
 
+    # Resolve emails → profile IDs
+    resolved_ids: list[str] = []
+    not_found: list[str] = []
+    for email in body.member_emails:
+        try:
+            res = _supabase.rpc("fn_profile_id_by_email", {"p_email": email.strip().lower()}).execute()
+            pid = res.data
+            if pid and pid != user.id:
+                resolved_ids.append(pid)
+            elif not pid:
+                not_found.append(email)
+        except Exception:
+            not_found.append(email)
+
     members = [{"room_id": room_id, "profile_id": user.id, "member_role": "owner"}]
-    for mid in body.member_ids:
-        if mid != user.id:
-            members.append({"room_id": room_id, "profile_id": mid, "member_role": "member"})
+    for pid in resolved_ids:
+        members.append({"room_id": room_id, "profile_id": pid, "member_role": "member"})
     _supabase.table("chat_room_member").insert(members).execute()
 
-    return room
+    return {**room, "room_code": room_code, "not_found_emails": not_found}
 
 
 @router.post("/rooms/join")
@@ -523,6 +536,36 @@ async def join_room(
     room_id = res.data
     room = _supabase.table("chat_room").select("*").eq("id", room_id).single().execute()
     return room.data
+
+
+@router.delete("/rooms/{room_id}", status_code=204)
+async def delete_or_leave_room(
+    room_id: str,
+    authorization: Optional[str] = Header(default=None),
+):
+    user = await _auth(authorization)
+    _assert_member(room_id, user.id)
+
+    room = _supabase.table("chat_room").select("type, created_by").eq("id", room_id).single().execute()
+    if not room.data:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    rtype = room.data["type"]
+    created_by = room.data["created_by"]
+
+    if rtype == "direct":
+        # Delete the whole room (messages cascade via FK)
+        _supabase.table("chat_room").delete().eq("id", room_id).execute()
+    elif rtype == "group":
+        if created_by == user.id:
+            # Owner deletes the entire group
+            _supabase.table("chat_room").delete().eq("id", room_id).execute()
+        else:
+            # Non-owner just leaves
+            _supabase.table("chat_room_member").delete().eq("room_id", room_id).eq("profile_id", user.id).execute()
+    else:
+        # Advisor — just leave
+        _supabase.table("chat_room_member").delete().eq("room_id", room_id).eq("profile_id", user.id).execute()
 
 
 @router.get("/rooms/{room_id}")

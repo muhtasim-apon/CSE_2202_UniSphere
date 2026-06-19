@@ -1,11 +1,11 @@
 'use client'
 
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { motion } from 'framer-motion'
-import { Send, Paperclip, X, Mic, Square } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Send, Paperclip, X, Mic, Square, MoreVertical, Copy, Check, Trash2, LogOut } from 'lucide-react'
 import {
   getMessages, sendMessage, editMessage, deleteMessage,
-  uploadChatAttachment, addReaction, removeReaction, markRead,
+  uploadChatAttachment, addReaction, removeReaction, markRead, deleteRoom,
   type ChatMessage, type ReactionType,
 } from '@/app/lib/chatApi'
 import { useChatRealtime } from '../useChatRealtime'
@@ -13,19 +13,28 @@ import MessageBubble from './MessageBubble'
 
 type Props = {
   roomId: string
+  roomType: 'direct' | 'advisor' | 'group'
   roomTitle: string | null
   roomAvatar?: string | null
+  roomCode?: string | null
+  roomCreatedBy?: string
   currentUserId: string
   currentUserName: string | null
   currentUserAvatar?: string | null
   token: string
   onNewMessage?: (roomId: string, senderId: string, body: string | null, createdAt: string, attachmentType?: string | null) => void
+  onRoomDeleted?: (roomId: string) => void
 }
 
-export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserId, currentUserName, currentUserAvatar, token, onNewMessage }: Props) {
+export default function ChatWindow({ roomId, roomType, roomTitle, roomAvatar, roomCode, roomCreatedBy, currentUserId, currentUserName, currentUserAvatar, token, onNewMessage, onRoomDeleted }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [body, setBody] = useState('')
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null)
+  const replyToRef = useRef<ChatMessage | null>(null)
+  const setReplyToSync = useCallback((msg: ChatMessage | null) => {
+    replyToRef.current = msg
+    setReplyTo(msg)
+  }, [])
   const [editingMsg, setEditingMsg] = useState<ChatMessage | null>(null)
   const [loading, setLoading] = useState(false)
   const [hasMore, setHasMore] = useState(true)
@@ -39,6 +48,12 @@ export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserI
   profileCache.current[currentUserId] = { display_name: currentUserName, avatar_url: currentUserAvatar ?? null }
 
   const [fetchError, setFetchError] = useState('')
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [codeCopied, setCodeCopied] = useState(false)
+  const [typers, setTypers] = useState<{ userId: string; displayName: string | null }[]>([])
+  const typingTimerRef    = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const typingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const isTypingActiveRef = useRef(false)
   const [recording, setRecording] = useState(false)
   const [recordingSecs, setRecordingSecs] = useState(0)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
@@ -100,8 +115,12 @@ export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserI
     })
   }, [messages.length])
 
-  useChatRealtime({
+  const { sendTyping } = useChatRealtime({
     roomId,
+    currentUserId,
+    currentUserName,
+    currentUserAvatar: currentUserAvatar ?? null,
+    onTyping: setTypers,
     onAttachment: (att) => {
       setMessages(prev => prev.map(m =>
         m.id === att.message_id
@@ -139,6 +158,10 @@ export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserI
   async function handleSend() {
     const trimmed = body.trim()
     if (!trimmed && !pendingFile) return
+    if (typingTimerRef.current) clearTimeout(typingTimerRef.current)
+    if (typingIntervalRef.current) { clearInterval(typingIntervalRef.current); typingIntervalRef.current = null }
+    isTypingActiveRef.current = false
+    sendTyping(false)
     setLoading(true)
     try {
       const msg = await sendMessage(roomId, { body: trimmed || undefined, reply_to: replyTo?.id, has_attachment: !!pendingFile }, token)
@@ -153,7 +176,7 @@ export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserI
       }
       onNewMessage?.(roomId, currentUserId, msg.body, msg.created_at, attType)
       setBody('')
-      setReplyTo(null)
+      setReplyToSync(null)
     } catch (e) { console.error(e) }
     finally { setLoading(false) }
   }
@@ -183,12 +206,15 @@ export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserI
         stream.getTracks().forEach(t => t.stop())
         const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' })
         const file = new File([blob], `voice-${Date.now()}.webm`, { type: 'audio/webm' })
+        const pendingReply = replyToRef.current
         setLoading(true)
         try {
-          const msg = await sendMessage(roomId, { has_attachment: true }, token)
+          const msg = await sendMessage(roomId, { has_attachment: true, reply_to: pendingReply?.id }, token)
           const att = await uploadChatAttachment(msg.id, file, token)
           setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, attachments: [...m.attachments, att] } : m))
           onNewMessage?.(roomId, currentUserId, null, msg.created_at, att.file_type ?? 'voicenote')
+          setReplyToSync(null)
+          replyToRef.current = null
         } catch (e) { console.error(e) }
         finally { setLoading(false) }
       }
@@ -216,6 +242,25 @@ export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserI
     setReplyTo(null)
   }
 
+  async function handleDeleteRoom() {
+    if (!confirm(roomType === 'group' && roomCreatedBy === currentUserId
+      ? 'Delete this group for everyone?'
+      : roomType === 'group'
+        ? 'Leave this group?'
+        : 'Delete this conversation?')) return
+    try {
+      await deleteRoom(roomId, token)
+      onRoomDeleted?.(roomId)
+    } catch (e) { console.error(e) }
+  }
+
+  function copyRoomCode() {
+    if (!roomCode) return
+    navigator.clipboard.writeText(roomCode)
+    setCodeCopied(true)
+    setTimeout(() => setCodeCopied(false), 2000)
+  }
+
   return (
     <div className="flex flex-col h-full min-h-0 bg-background">
       {/* Conversation header */}
@@ -226,7 +271,59 @@ export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserI
             : <span>{roomTitle?.[0]?.toUpperCase() ?? '?'}</span>
           }
         </div>
-        <span className="font-semibold text-sm text-primary truncate">{roomTitle ?? 'Chat'}</span>
+        <div className="flex-1 min-w-0">
+          <span className="font-semibold text-sm text-primary truncate block">{roomTitle ?? 'Chat'}</span>
+          {roomType === 'group' && roomCode && (
+            <button
+              onClick={copyRoomCode}
+              className="flex items-center gap-1 text-[10px] text-muted hover:text-accent transition-colors mt-0.5"
+              title="Copy room code"
+            >
+              <span className="font-mono">{roomCode}</span>
+              {codeCopied ? <Check size={10} className="text-highlight" /> : <Copy size={10} />}
+            </button>
+          )}
+        </div>
+
+        {/* 3-dots menu */}
+        <div className="relative flex-shrink-0">
+          <button
+            onClick={() => setMenuOpen(o => !o)}
+            className="p-1.5 rounded-lg text-muted hover:text-primary hover:bg-secondary/30 transition-colors"
+          >
+            <MoreVertical size={16} />
+          </button>
+          <AnimatePresence>
+            {menuOpen && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: -4 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: -4 }}
+                transition={{ duration: 0.1 }}
+                className="absolute right-0 top-full mt-1 w-44 bg-card border border-border rounded-xl shadow-lg z-20 overflow-hidden"
+                onMouseLeave={() => setMenuOpen(false)}
+              >
+                {roomType === 'group' && roomCode && (
+                  <button
+                    onClick={() => { copyRoomCode(); setMenuOpen(false) }}
+                    className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-primary hover:bg-secondary/30 transition-colors"
+                  >
+                    <Copy size={13} /> Copy room code
+                  </button>
+                )}
+                <button
+                  onClick={() => { setMenuOpen(false); handleDeleteRoom() }}
+                  className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-red-500 hover:bg-red-500/10 transition-colors"
+                >
+                  {roomType === 'group' && roomCreatedBy !== currentUserId
+                    ? <><LogOut size={13} /> Leave group</>
+                    : <><Trash2 size={13} /> {roomType === 'group' ? 'Delete group' : 'Delete conversation'}</>
+                  }
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </div>
 
       {/* Messages scroll area */}
@@ -256,13 +353,56 @@ export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserI
             currentUserId={currentUserId}
             grouped={i > 0 && messages[i - 1].sender_id === msg.sender_id}
             groupedNext={i < messages.length - 1 && messages[i + 1].sender_id === msg.sender_id}
-            onReply={setReplyTo}
+            onReply={setReplyToSync}
             onEdit={startEdit}
             onDelete={handleDelete}
             onReact={(id, r) => addReaction(id, r, token)}
             onUnreact={(id, r) => removeReaction(id, r, token)}
           />
         ))}
+
+        {/* Typing indicator — exact same layout as an incoming MessageBubble */}
+        <AnimatePresence>
+          {typers.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 4 }}
+              transition={{ duration: 0.15 }}
+              className="flex gap-2 mt-3 mb-0.5 flex-row"
+            >
+              {/* Avatar slot — same w-8 fixed width as MessageBubble */}
+              <div className="flex-shrink-0 w-8">
+                {(() => {
+                  const t = typers[0]
+                  const avatarUrl = t.avatarUrl ?? profileCache.current[t.userId]?.avatar_url
+                  const initial = (t.displayName ?? '?')[0]?.toUpperCase()
+                  return avatarUrl ? (
+                    <img src={avatarUrl} alt={t.displayName ?? ''}
+                      className="w-8 h-8 rounded-full object-cover" />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-accent/20 text-accent flex items-center justify-center text-xs font-bold">
+                      {initial}
+                    </div>
+                  )
+                })()}
+              </div>
+              {/* Bubble — bg-card border border-border, same as incoming text bubble */}
+              <div className="max-w-[70%] flex flex-col items-start">
+                <div className="px-4 py-2 bg-card text-primary border border-border rounded-2xl rounded-tl-sm flex items-center gap-1.5" style={{ minHeight: '2.375rem' }}>
+                  {[0, 1, 2].map(i => (
+                    <motion.span
+                      key={i}
+                      className="block w-2 h-2 rounded-full bg-muted"
+                      animate={{ y: [0, -5, 0] }}
+                      transition={{ duration: 0.5, repeat: Infinity, delay: i * 0.12, ease: 'easeInOut' }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Reply / Edit banner */}
@@ -273,7 +413,7 @@ export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserI
               ? 'Editing message'
               : `Replying to: ${replyTo?.body?.slice(0, 60) ?? '(attachment)'}`}
           </span>
-          <button onClick={() => { setReplyTo(null); setEditingMsg(null); setBody('') }}>
+          <button onClick={() => { setReplyToSync(null); setEditingMsg(null); setBody('') }}>
             <X size={13} className="text-muted hover:text-primary" />
           </button>
         </div>
@@ -312,7 +452,22 @@ export default function ChatWindow({ roomId, roomTitle, roomAvatar, currentUserI
         <textarea
           rows={1}
           value={body}
-          onChange={e => setBody(e.target.value)}
+          onChange={e => {
+            setBody(e.target.value)
+            // On idle → typing: send immediately and start keep-alive interval
+            if (!isTypingActiveRef.current) {
+              isTypingActiveRef.current = true
+              sendTyping(true)
+              typingIntervalRef.current = setInterval(() => sendTyping(true), 3000)
+            }
+            // Reset the idle-stop timer on every keystroke
+            if (typingTimerRef.current) clearTimeout(typingTimerRef.current)
+            typingTimerRef.current = setTimeout(() => {
+              isTypingActiveRef.current = false
+              if (typingIntervalRef.current) { clearInterval(typingIntervalRef.current); typingIntervalRef.current = null }
+              sendTyping(false)
+            }, 4000)
+          }}
           onKeyDown={e => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault()

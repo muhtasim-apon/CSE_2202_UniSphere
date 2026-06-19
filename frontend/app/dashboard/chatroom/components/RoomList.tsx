@@ -55,11 +55,17 @@ export default function RoomList({ rooms, activeRoomId, onSelect, onNewRoom, tok
   const [showGroup, setShowGroup] = useState(false)
   const [showJoin, setShowJoin] = useState(false)
 
-  const filtered = rooms.filter(r =>
-    tab === 'advisor' ? r.type === 'advisor' :
-    tab === 'group'   ? r.type === 'group' :
-    r.type === 'direct'
-  )
+  const filtered = rooms
+    .filter(r =>
+      tab === 'advisor' ? r.type === 'advisor' :
+      tab === 'group'   ? r.type === 'group' :
+      r.type === 'direct'
+    )
+    .sort((a, b) => {
+      const ta = a.last_message?.created_at ?? a.created_at
+      const tb = b.last_message?.created_at ?? b.created_at
+      return new Date(tb).getTime() - new Date(ta).getTime()
+    })
 
   return (
     <div className="flex flex-col h-full bg-card">

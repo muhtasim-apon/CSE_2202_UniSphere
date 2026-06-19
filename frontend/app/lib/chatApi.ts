@@ -118,9 +118,9 @@ export async function openAdvisorRoom(token: string): Promise<ChatRoom & { advis
 }
 
 export async function createGroupRoom(
-  data: { title: string; member_ids: string[]; password?: string },
+  data: { title: string; member_emails: string[]; password?: string },
   token: string
-): Promise<ChatRoom> {
+): Promise<ChatRoom & { room_code: string; not_found_emails: string[] }> {
   const res = await apiFetch(`${BASE}/api/chat/rooms/group`, {
     method: 'POST',
     headers: authHeader(token),
@@ -144,6 +144,13 @@ export async function joinRoom(
 export async function getRoom(roomId: string, token: string): Promise<ChatRoom & { members: unknown[] }> {
   const res = await apiFetch(`${BASE}/api/chat/rooms/${roomId}`, { headers: authHeader(token) })
   return res.json()
+}
+
+export async function deleteRoom(roomId: string, token: string): Promise<void> {
+  await apiFetch(`${BASE}/api/chat/rooms/${roomId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  })
 }
 
 // ── Messages ───────────────────────────────────────────────────────────────

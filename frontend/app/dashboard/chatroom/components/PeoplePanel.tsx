@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
 import { Search, UserPlus, MessageCircle, Clock, Check, X } from 'lucide-react'
 import {
-  getPeople, sendChatRequest, withdrawRequest,
+  getPeople, sendChatRequest, withdrawRequest, openDirectRoom,
   type PersonEntry, type ChatRoom,
 } from '@/app/lib/chatApi'
 
@@ -51,6 +51,13 @@ export default function PeoplePanel({ token, onOpenRoom }: Props) {
           ? { ...p, request_id: req.id, request_status: 'pending', request_direction: 'outgoing' }
           : p
       ))
+    } catch (e: any) { console.error(e) }
+  }
+
+  async function handleOpenChat(person: PersonEntry) {
+    try {
+      const room = await openDirectRoom(person.id, token)
+      onOpenRoom(room)
     } catch (e: any) { console.error(e) }
   }
 
@@ -106,9 +113,8 @@ export default function PeoplePanel({ token, onOpenRoom }: Props) {
 
             {/* Action button */}
             {person.has_direct_room ? (
-              // Already connected — show chat icon (open room via parent)
               <button
-                onClick={() => {/* room list will show it in Direct tab */}}
+                onClick={() => handleOpenChat(person)}
                 className="flex items-center gap-1 text-xs text-accent border border-accent/40 rounded-lg px-2.5 py-1.5 hover:bg-accent/10 transition-colors"
                 title="Open chat"
               >

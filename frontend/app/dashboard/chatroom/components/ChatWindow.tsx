@@ -50,7 +50,7 @@ export default function ChatWindow({ roomId, roomType, roomTitle, roomAvatar, ro
   const [fetchError, setFetchError] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [codeCopied, setCodeCopied] = useState(false)
-  const [typers, setTypers] = useState<{ userId: string; displayName: string | null }[]>([])
+  const [typers, setTypers] = useState<{ userId: string; displayName: string | null; avatarUrl?: string | null }[]>([])
   const typingTimerRef    = useRef<ReturnType<typeof setTimeout> | null>(null)
   const typingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const isTypingActiveRef = useRef(false)

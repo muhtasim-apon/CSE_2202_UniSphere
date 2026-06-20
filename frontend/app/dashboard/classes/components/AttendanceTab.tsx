@@ -1,27 +1,30 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { CheckSquare, AlertTriangle, Plus, Save } from 'lucide-react'
+import { CheckSquare, AlertTriangle, Plus, CalendarDays } from 'lucide-react'
 import {
-  getManualCourses, createAttendanceSession, updateAttendanceRecord,
-  getMyAttendanceSummary, getCourseAttendance,
-  type ManualCourse, type AttendanceRecord,
+  getCourseAttendance, createAttendanceSession, updateAttendanceRecord,
+  getMyAttendanceSummary,
+  type AttendanceSession, type AttendanceRecord,
 } from '@/app/lib/classesApi'
 
 type Props = {
   token: string
   role: 'teacher' | 'student'
+  courseId: number
+  courseName: string
 }
 
 const STATUS_STYLES: Record<string, string> = {
   Present: 'bg-emerald-100 text-emerald-700',
-  Absent: 'bg-red-100 text-red-700',
-  Late: 'bg-amber-100 text-amber-700',
+  Absent:  'bg-red-100 text-red-700',
+  Late:    'bg-amber-100 text-amber-700',
   Excused: 'bg-blue-100 text-blue-700',
 }
 const STATUSES = ['Present', 'Absent', 'Late', 'Excused']
 
 type AttSummary = {
+  course_id: number
   course_name: string
   total: number
   present: number
@@ -30,68 +33,66 @@ type AttSummary = {
   attendance_pct: number
 }
 
-function StudentView({ token }: { token: string }) {
-  const [summary, setSummary] = useState<AttSummary[]>([])
+function StudentView({ token, courseId, courseName }: { token: string; courseId: number; courseName: string }) {
+  const [summary, setSummary] = useState<AttSummary | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     getMyAttendanceSummary(token)
-      .then(res => setSummary((res.summary || []) as AttSummary[]))
+      .then(res => {
+        const all = (res.summary || []) as AttSummary[]
+        setSummary(all.find(s => s.course_id === courseId) ?? null)
+      })
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [token])
+  }, [token, courseId])
 
   if (loading) return <div className="h-48 animate-pulse bg-border rounded-xl" />
 
-  if (summary.length === 0) {
+  if (!summary) {
     return (
       <div className="text-center py-12">
         <CheckSquare className="h-10 w-10 text-border mx-auto mb-3" />
-        <p className="text-sm text-muted">No attendance records yet. Your instructor will add sessions.</p>
+        <p className="text-sm text-muted">No attendance records for {courseName} yet.</p>
+        <p className="text-xs text-muted mt-1">Your instructor will add sessions.</p>
       </div>
     )
   }
 
+  const pct = summary.attendance_pct
+  const low = pct < 75
+
   return (
-    <div className="grid gap-4 sm:grid-cols-2">
-      {summary.map((s, i) => {
-        const pct = s.attendance_pct
-        const low = pct < 75
-        return (
-          <div key={i} className={`rounded-xl border p-4 ${low ? 'border-red-300 bg-red-50' : 'border-border bg-card'}`}>
-            <div className="flex items-start justify-between">
-              <h3 className="font-semibold text-sm text-text-primary">{s.course_name}</h3>
-              {low && <AlertTriangle className="h-4 w-4 text-red-500 flex-shrink-0" />}
-            </div>
-            <div className="mt-2 mb-1">
-              <div className="flex justify-between text-xs text-muted mb-1">
-                <span>{s.present}/{s.total} classes</span>
-                <span className={`font-semibold ${low ? 'text-red-600' : 'text-emerald-600'}`}>{pct}%</span>
-              </div>
-              <div className="h-2 rounded-full bg-border">
-                <div
-                  className={`h-2 rounded-full transition-all ${low ? 'bg-red-500' : 'bg-emerald-500'}`}
-                  style={{ width: `${Math.min(pct, 100)}%` }}
-                />
-              </div>
-            </div>
-            <div className="flex gap-3 mt-2 text-xs text-muted">
-              <span className="text-emerald-700">Present: {s.present}</span>
-              <span className="text-red-700">Absent: {s.absent}</span>
-              <span className="text-amber-700">Late: {s.late}</span>
-            </div>
-            {low && <p className="text-xs text-red-600 mt-2 font-medium">Warning: Attendance below 75%</p>}
-          </div>
-        )
-      })}
+    <div className={`rounded-xl border p-4 ${low ? 'border-red-300 bg-red-50' : 'border-border bg-card'}`}>
+      <div className="flex items-start justify-between">
+        <h3 className="font-semibold text-sm text-text-primary">{summary.course_name}</h3>
+        {low && <AlertTriangle className="h-4 w-4 text-red-500 flex-shrink-0" />}
+      </div>
+      <div className="mt-2 mb-1">
+        <div className="flex justify-between text-xs text-muted mb-1">
+          <span>{summary.present}/{summary.total} classes</span>
+          <span className={`font-semibold ${low ? 'text-red-600' : 'text-emerald-600'}`}>{pct}%</span>
+        </div>
+        <div className="h-2 rounded-full bg-border">
+          <div
+            className={`h-2 rounded-full transition-all ${low ? 'bg-red-500' : 'bg-emerald-500'}`}
+            style={{ width: `${Math.min(pct, 100)}%` }}
+          />
+        </div>
+      </div>
+      <div className="flex gap-3 mt-2 text-xs text-muted">
+        <span className="text-emerald-700">Present: {summary.present}</span>
+        <span className="text-red-700">Absent: {summary.absent}</span>
+        <span className="text-amber-700">Late: {summary.late}</span>
+      </div>
+      {low && <p className="text-xs text-red-600 mt-2 font-medium">Warning: Attendance below 75%</p>}
     </div>
   )
 }
 
-function TeacherView({ token }: { token: string }) {
-  const [courses, setCourses] = useState<ManualCourse[]>([])
-  const [selectedCourse, setSelectedCourse] = useState<number | null>(null)
-  const [showModal, setShowModal] = useState(false)
+function TeacherView({ token, courseId }: { token: string; courseId: number }) {
+  const [sessions, setSessions] = useState<AttendanceSession[]>([])
+  const [loadingSessions, setLoadingSessions] = useState(true)
   const [sessionTitle, setSessionTitle] = useState('')
   const [topic, setTopic] = useState('')
   const [sessionDate, setSessionDate] = useState(new Date().toISOString().split('T')[0])
@@ -99,32 +100,34 @@ function TeacherView({ token }: { token: string }) {
   const [error, setError] = useState('')
   const [sessionResult, setSessionResult] = useState<{ session: object; records: AttendanceRecord[] } | null>(null)
   const [statusMap, setStatusMap] = useState<Record<number, string>>({})
-  const [savedSession, setSavedSession] = useState(false)
 
-  useEffect(() => {
-    getManualCourses(token)
-      .then(res => setCourses(res.courses || []))
+  const inputClass = 'w-full rounded-xl border border-border bg-card px-4 py-2.5 text-sm focus:border-accent focus:ring-2 focus:ring-accent/20 focus:outline-none'
+
+  function loadSessions() {
+    setLoadingSessions(true)
+    getCourseAttendance(token, courseId)
+      .then(res => setSessions(res.sessions || []))
       .catch(() => {})
-  }, [token])
+      .finally(() => setLoadingSessions(false))
+  }
+
+  useEffect(() => { loadSessions() }, [courseId])
 
   async function startSession() {
-    if (!selectedCourse) { setError('Select a course first'); return }
     setSaving(true)
     setError('')
     try {
       const res = await createAttendanceSession(token, {
-        manual_course_id: selectedCourse,
-        session_date: sessionDate,
-        session_title: sessionTitle || undefined,
-        topic: topic || undefined,
+        manual_course_id: courseId,
+        session_date:     sessionDate,
+        session_title:    sessionTitle || undefined,
+        topic:            topic || undefined,
       })
       const initMap: Record<number, string> = {}
-      for (const r of res.records) {
-        initMap[r.student_id] = r.status
-      }
+      for (const r of res.records) initMap[r.student_id] = r.status
       setStatusMap(initMap)
       setSessionResult(res)
-      setSavedSession(false)
+      loadSessions()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to start session')
     }
@@ -133,31 +136,15 @@ function TeacherView({ token }: { token: string }) {
 
   async function saveRecord(sessionId: number, studentId: number, status: string) {
     setStatusMap(prev => ({ ...prev, [studentId]: status }))
-    try {
-      await updateAttendanceRecord(token, sessionId, studentId, status)
-    } catch {}
+    try { await updateAttendanceRecord(token, sessionId, studentId, status) } catch {}
   }
-
-  const inputClass = 'w-full rounded-xl border border-border bg-card px-4 py-2.5 text-sm focus:border-accent focus:ring-2 focus:ring-accent/20 focus:outline-none'
 
   return (
     <div className="space-y-4">
+      {/* New session form */}
       <div className="rounded-xl border border-border p-4 space-y-3">
-        <h3 className="font-semibold text-sm text-text-primary">Take Attendance</h3>
+        <h3 className="font-semibold text-sm text-text-primary">Start New Session</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-muted">Course</label>
-            <select
-              className={inputClass}
-              value={selectedCourse ?? ''}
-              onChange={e => setSelectedCourse(e.target.value ? Number(e.target.value) : null)}
-            >
-              <option value="">Select course...</option>
-              {courses.map(c => (
-                <option key={c.manual_course_id} value={c.manual_course_id}>{c.course_name}</option>
-              ))}
-            </select>
-          </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-muted">Date</label>
             <input type="date" className={inputClass} value={sessionDate} onChange={e => setSessionDate(e.target.value)} />
@@ -174,7 +161,7 @@ function TeacherView({ token }: { token: string }) {
         {error && <p className="text-xs text-red-600">{error}</p>}
         <button
           onClick={startSession}
-          disabled={saving || !selectedCourse}
+          disabled={saving}
           className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-60"
         >
           <Plus className="h-4 w-4" />
@@ -182,20 +169,17 @@ function TeacherView({ token }: { token: string }) {
         </button>
       </div>
 
+      {/* Active session marking */}
       {sessionResult && (
         <div className="rounded-xl border border-border p-4">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="font-semibold text-sm text-text-primary">Mark Attendance</h3>
-            {savedSession && <span className="text-xs text-emerald-600 font-medium">Saved</span>}
-          </div>
+          <h3 className="font-semibold text-sm text-text-primary mb-3">Mark Attendance</h3>
           <div className="space-y-2">
-            {sessionResult.records.map((r) => {
+            {sessionResult.records.map(r => {
               const student = (r as unknown as Record<string, unknown>).student as Record<string, string> | undefined
               const name = student ? `${student.first_name} ${student.last_name}` : `Student ${r.student_id}`
               const roll = student?.student_roll
               const currentStatus = statusMap[r.student_id] || 'Present'
               const session = sessionResult.session as Record<string, number>
-
               return (
                 <div key={r.student_id} className="flex items-center justify-between gap-2 rounded-lg bg-background px-3 py-2">
                   <div>
@@ -224,15 +208,48 @@ function TeacherView({ token }: { token: string }) {
           )}
         </div>
       )}
+
+      {/* Past sessions */}
+      <div>
+        <h3 className="font-semibold text-sm text-text-primary mb-2">Past Sessions</h3>
+        {loadingSessions ? (
+          <div className="space-y-2">
+            {[1, 2].map(i => <div key={i} className="h-12 animate-pulse rounded-xl bg-border" />)}
+          </div>
+        ) : sessions.length === 0 ? (
+          <div className="text-center py-6 rounded-xl border border-dashed border-border">
+            <CalendarDays className="h-8 w-8 text-border mx-auto mb-2" />
+            <p className="text-sm text-muted">No sessions yet. Start the first one above.</p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {sessions.map(s => (
+              <div key={s.session_id} className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-2.5">
+                <CalendarDays className="h-4 w-4 text-muted flex-shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-text-primary">
+                    {s.session_title || s.topic || 'Session'}
+                  </p>
+                  <p className="text-xs text-muted">{new Date(s.session_date).toLocaleDateString()}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
 
-export default function AttendanceTab({ token, role }: Props) {
+export default function AttendanceTab({ token, role, courseId, courseName }: Props) {
   return (
     <div className="rounded-card border border-border bg-card p-5 shadow-[var(--shadow-card)]">
-      <h2 className="text-base font-semibold text-text-primary mb-4">Attendance</h2>
-      {role === 'teacher' ? <TeacherView token={token} /> : <StudentView token={token} />}
+      <h2 className="text-base font-semibold text-text-primary mb-0.5">Attendance</h2>
+      <p className="text-xs text-muted mb-4">{courseName}</p>
+      {role === 'teacher'
+        ? <TeacherView token={token} courseId={courseId} />
+        : <StudentView token={token} courseId={courseId} courseName={courseName} />
+      }
     </div>
   )
 }

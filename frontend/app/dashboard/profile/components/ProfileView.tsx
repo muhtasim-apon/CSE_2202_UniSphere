@@ -1,14 +1,14 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Pencil, User, X, RefreshCw, CheckCircle2 } from 'lucide-react'
+import { Pencil, User, X, CheckCircle2, GraduationCap } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import ModuleCard from '../../components/ModuleCard'
 import ProfilePhotoUpload from './ProfilePhotoUpload'
 import { validateName, validatePhone, validateAddress, validateBio, toLocalPhone } from '@/lib/validation'
-import { updateHireDate, recalculateCGPA } from '@/app/lib/classesApi'
+import { updateHireDate } from '@/app/lib/classesApi'
 
 type Gender = 'Male' | 'Female' | 'Other'
 
@@ -55,6 +55,12 @@ type InstructorProfile = {
   dept_name: string
 }
 
+type Program = {
+  program_id: number
+  program_name: string
+  program_code: string
+}
+
 type ProfileViewProps =
   | { userId: string; role: 'student'; initialProfile: StudentProfile }
   | { userId: string; role: 'instructor'; initialProfile: InstructorProfile }
@@ -73,6 +79,14 @@ function InfoField({ label, value }: { label: string; value: string }) {
   )
 }
 
+function cgpaColor(cgpa: number): string {
+  if (cgpa >= 3.75) return 'text-emerald-600'
+  if (cgpa >= 3.50) return 'text-blue-600'
+  if (cgpa >= 3.00) return 'text-indigo-600'
+  if (cgpa >= 2.50) return 'text-amber-600'
+  return 'text-red-600'
+}
+
 export default function ProfileView({ userId, role, initialProfile }: ProfileViewProps) {
   const router = useRouter()
   const [editing, setEditing] = useState(false)
@@ -81,34 +95,49 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
   const [success, setSuccess] = useState(false)
   const [photoUrl, setPhotoUrl] = useState(initialProfile.profile_photo)
 
+  // ── Personal fields ────────────────────────────────────────
   const [firstName, setFirstName] = useState(initialProfile.first_name)
   const [lastName, setLastName] = useState(initialProfile.last_name)
   const [gender, setGender] = useState<Gender>(initialProfile.gender ?? 'Male')
   const [dateOfBirth, setDateOfBirth] = useState(initialProfile.date_of_birth ?? '')
   const [phone, setPhone] = useState(toLocalPhone(initialProfile.phone))
 
-  // Student-only fields
+  // ── Student-only personal fields ──────────────────────────
   const student = role === 'student' ? (initialProfile as StudentProfile) : null
   const [address, setAddress] = useState(student?.address ?? '')
   const [emergencyContactName, setEmergencyContactName] = useState(student?.emergency_contact_name ?? '')
   const [emergencyContactPhone, setEmergencyContactPhone] = useState(toLocalPhone(student?.emergency_contact_phone ?? null))
 
-  // Instructor-only fields
+  // ── Student academic fields (now editable) ─────────────────
+  const [studentRoll, setStudentRoll] = useState(student?.student_roll ?? '')
+  const [batchYear, setBatchYear] = useState(student?.batch_year ?? new Date().getFullYear())
+  const [currentSemester, setCurrentSemester] = useState(student?.current_semester ?? 1)
+  const [programId, setProgramId] = useState<number | ''>('')
+  const [programs, setPrograms] = useState<Program[]>([])
+
+  // ── Instructor-only fields ─────────────────────────────────
   const instructor = role === 'instructor' ? (initialProfile as InstructorProfile) : null
   const [officeLocation, setOfficeLocation] = useState(instructor?.office_location ?? '')
   const [specialization, setSpecialization] = useState(instructor?.specialization ?? '')
   const [bio, setBio] = useState(instructor?.bio ?? '')
-
-  // Editable date fields
   const [hireDate, setHireDate] = useState(instructor?.hire_date ?? '')
   const [dateEditMode, setDateEditMode] = useState(false)
   const [dateSaving, setDateSaving] = useState(false)
   const [dateMsg, setDateMsg] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
 
-  // CGPA recalc
-  const [cgpaVal, setCgpaVal] = useState(student?.cgpa ?? 0)
-  const [cgpaRecalc, setCgpaRecalc] = useState(false)
-  const [cgpaMsg, setCgpaMsg] = useState<string | null>(null)
+  // Fetch programs + current program_id when edit mode opens (student only)
+  useEffect(() => {
+    if (!editing || role !== 'student') return
+    const supabase = createClient()
+    // Fetch all available programs for dropdown
+    supabase.from('program').select('program_id, program_name, program_code').order('program_name').then(({ data }) => {
+      setPrograms((data || []) as Program[])
+    })
+    // Fetch the student's current program_id (not in the view)
+    supabase.from('student').select('program_id').eq('profile_id', userId).single().then(({ data }) => {
+      if (data?.program_id) setProgramId(data.program_id)
+    })
+  }, [editing, role, userId])
 
   async function saveDateField() {
     const supabase = createClient()
@@ -127,22 +156,6 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
     setDateSaving(false)
   }
 
-  async function handleCgpaRecalc() {
-    const supabase = createClient()
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session?.access_token) return
-    setCgpaRecalc(true)
-    setCgpaMsg(null)
-    try {
-      const res = await recalculateCGPA(session.access_token)
-      setCgpaVal(res.new_cgpa)
-      setCgpaMsg(`Updated to ${res.new_cgpa.toFixed(2)}`)
-    } catch {
-      setCgpaMsg('No exam marks found yet.')
-    }
-    setCgpaRecalc(false)
-  }
-
   const fullName = `${initialProfile.first_name} ${initialProfile.last_name}`
   const initials = `${initialProfile.first_name.charAt(0)}${initialProfile.last_name.charAt(0) || ''}`.toUpperCase()
 
@@ -156,6 +169,10 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
       setAddress(student.address ?? '')
       setEmergencyContactName(student.emergency_contact_name ?? '')
       setEmergencyContactPhone(toLocalPhone(student.emergency_contact_phone))
+      setStudentRoll(student.student_roll)
+      setBatchYear(student.batch_year)
+      setCurrentSemester(student.current_semester)
+      setProgramId('')
     }
     if (instructor) {
       setOfficeLocation(instructor.office_location ?? '')
@@ -180,10 +197,10 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
 
     let payload: Record<string, unknown> = {
       first_name: firstName.trim(),
-      last_name: lastName.trim(),
+      last_name:  lastName.trim(),
       gender,
       date_of_birth: dateOfBirth || null,
-      phone: phone || null,
+      phone:         phone || null,
     }
 
     if (role === 'student') {
@@ -192,13 +209,20 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
           validateAddress(address) && `Address: ${validateAddress(address)}`,
           emergencyContactName && validateName(emergencyContactName) && `Emergency contact name: ${validateName(emergencyContactName)}`,
           validatePhone(emergencyContactPhone) && `Emergency contact phone: ${validatePhone(emergencyContactPhone)}`,
+          !studentRoll.trim() && 'Registration No is required',
+          (!batchYear || batchYear < 2000 || batchYear > 2040) && 'Batch year must be between 2000 and 2040',
+          (!currentSemester || currentSemester < 1 || currentSemester > 8) && 'Semester must be 1–8',
         ].filter(Boolean) as string[])
       )
 
       payload = {
         ...payload,
-        address: address || null,
-        emergency_contact_name: emergencyContactName || null,
+        student_roll:            studentRoll.trim() || null,
+        batch_year:              batchYear || null,
+        current_semester:        currentSemester || null,
+        program_id:              programId || null,
+        address:                 address || null,
+        emergency_contact_name:  emergencyContactName || null,
         emergency_contact_phone: emergencyContactPhone || null,
       }
     } else {
@@ -207,12 +231,11 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
           validateBio(bio) && `Bio: ${validateBio(bio)}`,
         ].filter(Boolean) as string[])
       )
-
       payload = {
         ...payload,
         office_location: officeLocation || null,
-        specialization: specialization || null,
-        bio: bio || null,
+        specialization:  specialization || null,
+        bio:             bio || null,
       }
     }
 
@@ -242,9 +265,15 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
     router.refresh()
   }
 
+  // Computed display values
+  const yearNum = student ? Math.ceil(student.current_semester / 2) : 0
+  const semNum  = student ? (student.current_semester % 2 === 1 ? 1 : 2) : 0
+  const cgpa    = student?.cgpa ?? 0
+  const cgpaColorClass = cgpaColor(cgpa)
+
   return (
     <div className="space-y-6">
-      {/* Header card */}
+      {/* ── Header card ────────────────────────────────────── */}
       <div className="rounded-card border border-border bg-card p-5 shadow-[var(--shadow-card)]">
         <div className="flex flex-col items-start justify-between gap-4 sm:flex-row sm:items-center">
           <div className="flex items-center gap-4">
@@ -257,9 +286,28 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
             />
             <div>
               <h2 className="text-lg font-semibold text-text-primary">{fullName}</h2>
-              <span className="mt-1 inline-flex items-center rounded-full bg-accent/10 px-2 py-0.5 text-xs font-medium capitalize text-primary">
-                {role}
-              </span>
+              <div className="flex flex-wrap items-center gap-2 mt-1">
+                <span className="inline-flex items-center rounded-full bg-accent/10 px-2 py-0.5 text-xs font-medium capitalize text-primary">
+                  {role}
+                </span>
+                {student && (
+                  <>
+                    <span className="inline-flex items-center rounded-full bg-secondary/10 px-2.5 py-0.5 text-xs font-medium text-secondary">
+                      Year {yearNum}, Semester {semNum} · Batch {student.batch_year}
+                    </span>
+                    {cgpa > 0 && (
+                      <span className={`inline-flex items-center rounded-full bg-background border border-border px-2.5 py-0.5 text-xs font-semibold ${cgpaColorClass}`}>
+                        CGPA {cgpa.toFixed(2)}
+                      </span>
+                    )}
+                    {cgpa === 0 && (
+                      <Link href="/dashboard/classes" className="text-xs text-accent hover:underline">
+                        Add exam marks to see CGPA →
+                      </Link>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
           </div>
 
@@ -278,50 +326,38 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
         </div>
       </div>
 
-      {/* Read-only info */}
+      {/* ── Read-only info grid ─────────────────────────────── */}
       <ModuleCard title="Profile Information" icon={User} iconBgClassName="bg-accent/10">
         {role === 'student' && student ? (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-            <InfoField label="Registration No" value={student.student_roll} />
-            <InfoField label="Program" value={student.program_name} />
-            <InfoField label="Department" value={student.dept_name} />
-            <InfoField label="Batch Year" value={String(student.batch_year)} />
-            <InfoField label="Current Semester" value={String(student.current_semester)} />
+            <InfoField label="Registration No"  value={student.student_roll} />
+            <InfoField label="Program"          value={student.program_name} />
+            <InfoField label="Department"       value={student.dept_name} />
+            <InfoField label="Batch Year"       value={String(student.batch_year)} />
+            <InfoField label="Year & Semester"  value={`Year ${yearNum}, Semester ${semNum}`} />
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">CGPA</p>
-              <div className="mt-1 flex items-center gap-2">
-                <span className={`text-sm font-semibold ${Number(cgpaVal) === 0 ? 'text-muted' : 'text-text-primary'}`}>
-                  {Number(cgpaVal).toFixed(2)}
-                </span>
-                <button
-                  onClick={handleCgpaRecalc}
-                  disabled={cgpaRecalc}
-                  title="Recalculate from exam marks"
-                  className="text-muted hover:text-primary transition"
-                >
-                  <RefreshCw className={`h-3.5 w-3.5 ${cgpaRecalc ? 'animate-spin' : ''}`} />
-                </button>
-              </div>
-              {Number(cgpaVal) === 0 && (
+              <p className={`mt-1 text-sm font-semibold ${cgpa === 0 ? 'text-muted' : cgpaColorClass}`}>
+                {cgpa > 0 ? cgpa.toFixed(2) : '—'}
+              </p>
+              {cgpa === 0 && (
                 <Link href="/dashboard/classes" className="text-xs text-accent hover:underline mt-0.5 block">
                   Add exam marks →
                 </Link>
               )}
-              {cgpaMsg && <p className="text-xs text-emerald-600 mt-0.5">{cgpaMsg}</p>}
             </div>
             <InfoField label="Total Credits" value={String(student.total_credits)} />
-            <InfoField label="Joined" value={new Date(student.account_created_at).toLocaleDateString()} />
-            <InfoField label="Status" value={student.is_active ? 'Active' : 'Inactive'} />
+            <InfoField label="Joined"        value={new Date(student.account_created_at).toLocaleDateString()} />
+            <InfoField label="Status"        value={student.is_active ? 'Active' : 'Inactive'} />
           </div>
         ) : instructor ? (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-            <InfoField label="Employee ID" value={instructor.employee_id} />
+            <InfoField label="Employee ID"  value={instructor.employee_id} />
             <InfoField label="Designation" value={instructor.designation} />
-            <InfoField label="Department" value={instructor.dept_name} />
-            {/* Editable hire date */}
+            <InfoField label="Department"  value={instructor.dept_name} />
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-text-muted">Hire Date</p>
-              {dateEditMode && role === 'instructor' ? (
+              {dateEditMode ? (
                 <div className="mt-1 flex items-center gap-1">
                   <input
                     type="date"
@@ -355,112 +391,153 @@ export default function ProfileView({ userId, role, initialProfile }: ProfileVie
         ) : null}
       </ModuleCard>
 
-      {/* Editable form */}
+      {/* ── Editable form ──────────────────────────────────── */}
       <ModuleCard title="Edit Details" icon={Pencil} iconBgClassName="bg-highlight/10" iconClassName="text-highlight">
-        <form onSubmit={handleSave} className="space-y-4">
-          <fieldset disabled={!editing} className="space-y-4 disabled:opacity-60">
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label className={labelClass}>First Name</label>
-                <input className={inputClass} value={firstName} onChange={(e) => setFirstName(e.target.value)} />
-              </div>
-              <div>
-                <label className={labelClass}>Last Name</label>
-                <input className={inputClass} value={lastName} onChange={(e) => setLastName(e.target.value)} />
-              </div>
-            </div>
+        <form onSubmit={handleSave} className="space-y-6">
+          <fieldset disabled={!editing} className="space-y-6 disabled:opacity-60">
 
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label className={labelClass}>Gender</label>
-                <select className={inputClass} value={gender} onChange={(e) => setGender(e.target.value as Gender)}>
-                  <option value="Male">Male</option>
-                  <option value="Female">Female</option>
-                  <option value="Other">Other</option>
-                </select>
-              </div>
-              <div>
-                <label className={labelClass}>Date of Birth</label>
-                <input
-                  type="date"
-                  className={inputClass}
-                  value={dateOfBirth}
-                  onChange={(e) => setDateOfBirth(e.target.value)}
-                />
-              </div>
-            </div>
+            {/* Personal Information */}
+            <div className="space-y-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted">Personal Information</p>
 
-            <div>
-              <label className={labelClass}>Phone</label>
-              <input
-                className={inputClass}
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="01XXXXXXXXX"
-              />
-            </div>
-
-            {role === 'student' ? (
-              <>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
-                  <label className={labelClass}>Address</label>
-                  <input className={inputClass} value={address} onChange={(e) => setAddress(e.target.value)} />
+                  <label className={labelClass}>First Name</label>
+                  <input className={inputClass} value={firstName} onChange={e => setFirstName(e.target.value)} />
+                </div>
+                <div>
+                  <label className={labelClass}>Last Name</label>
+                  <input className={inputClass} value={lastName} onChange={e => setLastName(e.target.value)} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label className={labelClass}>Gender</label>
+                  <select className={inputClass} value={gender} onChange={e => setGender(e.target.value as Gender)}>
+                    <option value="Male">Male</option>
+                    <option value="Female">Female</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={labelClass}>Date of Birth</label>
+                  <input type="date" className={inputClass} value={dateOfBirth} onChange={e => setDateOfBirth(e.target.value)} />
+                </div>
+              </div>
+
+              <div>
+                <label className={labelClass}>Phone</label>
+                <input className={inputClass} value={phone} onChange={e => setPhone(e.target.value)} placeholder="01XXXXXXXXX" />
+              </div>
+
+              {role === 'student' && (
+                <>
+                  <div>
+                    <label className={labelClass}>Address</label>
+                    <input className={inputClass} value={address} onChange={e => setAddress(e.target.value)} />
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <div>
+                      <label className={labelClass}>Emergency Contact Name</label>
+                      <input className={inputClass} value={emergencyContactName} onChange={e => setEmergencyContactName(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className={labelClass}>Emergency Contact Phone</label>
+                      <input className={inputClass} value={emergencyContactPhone} onChange={e => setEmergencyContactPhone(e.target.value)} placeholder="01XXXXXXXXX" />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {role === 'instructor' && (
+                <>
+                  <div>
+                    <label className={labelClass}>Office Location</label>
+                    <input className={inputClass} value={officeLocation} onChange={e => setOfficeLocation(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Specialization</label>
+                    <input className={inputClass} value={specialization} onChange={e => setSpecialization(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className={labelClass}>Bio</label>
+                    <textarea className={inputClass} rows={4} value={bio} onChange={e => setBio(e.target.value)} />
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Academic Information — students only */}
+            {role === 'student' && (
+              <div className="space-y-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted flex items-center gap-1.5">
+                  <GraduationCap className="h-3.5 w-3.5" /> Academic Information
+                </p>
+
+                <div>
+                  <label className={labelClass}>Registration No</label>
+                  <input
+                    className={inputClass}
+                    value={studentRoll}
+                    onChange={e => setStudentRoll(e.target.value)}
+                    placeholder="2023XXXXXXXX"
+                  />
                 </div>
 
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div>
-                    <label className={labelClass}>Emergency Contact Name</label>
+                    <label className={labelClass}>Batch Year</label>
                     <input
+                      type="number"
+                      min={2000}
+                      max={2040}
                       className={inputClass}
-                      value={emergencyContactName}
-                      onChange={(e) => setEmergencyContactName(e.target.value)}
+                      value={batchYear}
+                      onChange={e => setBatchYear(Number(e.target.value))}
+                      placeholder="2023"
                     />
                   </div>
                   <div>
-                    <label className={labelClass}>Emergency Contact Phone</label>
-                    <input
+                    <label className={labelClass}>Current Semester</label>
+                    <select
                       className={inputClass}
-                      value={emergencyContactPhone}
-                      onChange={(e) => setEmergencyContactPhone(e.target.value)}
-                      placeholder="01XXXXXXXXX"
-                    />
+                      value={currentSemester}
+                      onChange={e => setCurrentSemester(Number(e.target.value))}
+                    >
+                      {[1,2,3,4,5,6,7,8].map(n => (
+                        <option key={n} value={n}>
+                          Year {Math.ceil(n/2)}, Semester {n%2===1?1:2}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                 </div>
-              </>
-            ) : (
-              <>
-                <div>
-                  <label className={labelClass}>Office Location</label>
-                  <input
-                    className={inputClass}
-                    value={officeLocation}
-                    onChange={(e) => setOfficeLocation(e.target.value)}
-                  />
-                </div>
 
                 <div>
-                  <label className={labelClass}>Specialization</label>
-                  <input
-                    className={inputClass}
-                    value={specialization}
-                    onChange={(e) => setSpecialization(e.target.value)}
-                  />
+                  <label className={labelClass}>Program</label>
+                  {programs.length === 0 && editing ? (
+                    <div className="h-10 animate-pulse rounded-lg bg-border" />
+                  ) : (
+                    <select
+                      className={inputClass}
+                      value={programId}
+                      onChange={e => setProgramId(e.target.value ? Number(e.target.value) : '')}
+                    >
+                      <option value="">— Select Program —</option>
+                      {programs.map(p => (
+                        <option key={p.program_id} value={p.program_id}>
+                          {p.program_name} ({p.program_code})
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </div>
-
-                <div>
-                  <label className={labelClass}>Bio</label>
-                  <textarea
-                    className={inputClass}
-                    rows={4}
-                    value={bio}
-                    onChange={(e) => setBio(e.target.value)}
-                  />
-                </div>
-              </>
+              </div>
             )}
           </fieldset>
 
-          {error && <p className="rounded-lg bg-notification/10 px-3 py-2 text-sm text-notification">{error}</p>}
+          {error   && <p className="rounded-lg bg-notification/10 px-3 py-2 text-sm text-notification">{error}</p>}
           {success && <p className="rounded-lg bg-highlight/10 px-3 py-2 text-sm text-highlight">Profile updated successfully.</p>}
 
           {editing && (

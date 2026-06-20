@@ -14,6 +14,7 @@ export interface ManualCourse {
   enroll_code: string
   semester: string | null
   academic_year: string | null
+  semester_number: number | null
   is_active: boolean
   created_at: string
   enrollment_count?: number
@@ -75,6 +76,8 @@ export interface ExamBreakdown {
   credit_hours: number | null
   marks_obtained: number | null
   total_marks: number | null
+  course_name: string | null
+  course_code: string | null
 }
 
 export interface CGPAResult {
@@ -111,6 +114,7 @@ async function apiFetch(url: string, init: RequestInit): Promise<Response> {
 export async function createManualCourse(token: string, data: {
   course_name: string; course_code?: string; description?: string
   credit_hours?: number; enroll_code?: string; semester?: string; academic_year?: string
+  semester_number?: number | null
 }): Promise<ManualCourse> {
   return (await apiFetch(`${BASE}/api/classes/manual/create`, { method: 'POST', headers: authHeader(token), body: JSON.stringify(data) })).json()
 }
@@ -163,6 +167,10 @@ export async function createExam(token: string, data: {
 
 export async function getExams(token: string): Promise<{ exams: Exam[] }> {
   return (await apiFetch(`${BASE}/api/classes/exams`, { headers: { Authorization: `Bearer ${token}` } })).json()
+}
+
+export async function getExamsByCourse(token: string, courseId: number): Promise<{ exams: Exam[] }> {
+  return (await apiFetch(`${BASE}/api/classes/exams?course_id=${courseId}`, { headers: { Authorization: `Bearer ${token}` } })).json()
 }
 
 export async function upsertMark(token: string, examId: number, studentId: number, marksObtained: number, remarks?: string): Promise<ExamMark> {

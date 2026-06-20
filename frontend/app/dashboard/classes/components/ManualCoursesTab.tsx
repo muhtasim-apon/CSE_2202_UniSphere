@@ -7,6 +7,7 @@ import {
   getManualCourses, createManualCourse, joinManualCourse,
   type ManualCourse,
 } from '@/app/lib/classesApi'
+import { CURRICULUM_COURSES, type CurriculumCourse, semesterLabel } from '@/app/lib/curriculumCourses'
 import StudentsPanel from './StudentsPanel'
 import ResourcesPanel from './ResourcesPanel'
 
@@ -14,12 +15,11 @@ type Props = {
   token: string
   role: 'teacher' | 'student'
   userId: string
+  onCourseSelect?: (course: ManualCourse | null) => void
 }
 
 const inputClass = 'w-full rounded-xl border border-border bg-card px-4 py-2.5 text-sm focus:border-accent focus:ring-2 focus:ring-accent/20 focus:outline-none'
 const labelClass = 'mb-1 block text-sm font-medium text-text-primary'
-
-// ── Unchanged modals ──────────────────────────────────────────────────────────
 
 function CreateCourseModal({ token, onClose, onSuccess }: { token: string; onClose: () => void; onSuccess: () => void }) {
   const [saving, setSaving] = useState(false)
@@ -31,6 +31,8 @@ function CreateCourseModal({ token, onClose, onSuccess }: { token: string; onClo
   const [enrollCode, setEnrollCode] = useState(() => Math.random().toString(36).slice(2, 8).toUpperCase())
   const [semester, setSemester] = useState('')
   const [academicYear, setAcademicYear] = useState('')
+  const [semNum, setSemNum] = useState<number | ''>('')
+  const [selectedCurr, setSelectedCurr] = useState<CurriculumCourse | null>(null)
 
   async function handleCreate() {
     if (!courseName.trim()) { setError('Course name is required'); return }
@@ -38,13 +40,14 @@ function CreateCourseModal({ token, onClose, onSuccess }: { token: string; onClo
     setError('')
     try {
       await createManualCourse(token, {
-        course_name: courseName.trim(),
-        course_code: courseCode || undefined,
-        description: description || undefined,
-        credit_hours: parseFloat(creditHours) || 3.0,
-        enroll_code: enrollCode || undefined,
-        semester: semester || undefined,
-        academic_year: academicYear || undefined,
+        course_name:     courseName.trim(),
+        course_code:     courseCode || undefined,
+        description:     description || undefined,
+        credit_hours:    parseFloat(creditHours) || 3.0,
+        enroll_code:     enrollCode || undefined,
+        semester:        semester || undefined,
+        academic_year:   academicYear || undefined,
+        semester_number: semNum !== '' ? (semNum as number) : null,
       })
       onSuccess()
       onClose()
@@ -60,25 +63,89 @@ function CreateCourseModal({ token, onClose, onSuccess }: { token: string; onClo
         <h2 className="font-display text-lg font-bold text-text-primary mb-4">Create Course</h2>
         {error && <p className="mb-3 rounded-xl bg-red-50 px-4 py-2 text-sm text-red-600">{error}</p>}
         <div className="space-y-3">
+          {/* Semester picker */}
+          <div>
+            <label className={labelClass}>Semester (optional)</label>
+            <select
+              className={inputClass}
+              value={semNum}
+              onChange={e => {
+                const v = e.target.value ? Number(e.target.value) : ''
+                setSemNum(v)
+                setSelectedCurr(null)
+              }}
+            >
+              <option value="">— Select Semester —</option>
+              {[1,2,3,4,5,6,7,8].map(n => (
+                <option key={n} value={n}>{semesterLabel(n)}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Curriculum dropdown — shown when semester is selected */}
+          {semNum !== '' && (
+            <div>
+              <label className={labelClass}>Course from Curriculum</label>
+              <select
+                className={inputClass}
+                value={selectedCurr?.code ?? ''}
+                onChange={e => {
+                  const c = (CURRICULUM_COURSES[semNum as number] ?? []).find(x => x.code === e.target.value) ?? null
+                  setSelectedCurr(c)
+                  if (c) {
+                    setCourseName(c.name)
+                    setCourseCode(c.code)
+                    setCreditHours(String(c.credits))
+                  }
+                }}
+              >
+                <option value="">— Pick a course (or fill manually below) —</option>
+                {(CURRICULUM_COURSES[semNum as number] ?? []).map(c => (
+                  <option key={c.code} value={c.code}>
+                    {c.code} — {c.name} ({c.credits} cr)
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div>
             <label className={labelClass}>Course Name *</label>
             <input className={inputClass} value={courseName} onChange={e => setCourseName(e.target.value)} placeholder="Database Management Systems" />
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div><label className={labelClass}>Course Code</label><input className={inputClass} value={courseCode} onChange={e => setCourseCode(e.target.value)} placeholder="CSE-301" /></div>
-            <div><label className={labelClass}>Credit Hours</label><input type="number" step="0.5" min="0.5" max="6" className={inputClass} value={creditHours} onChange={e => setCreditHours(e.target.value)} /></div>
+            <div>
+              <label className={labelClass}>Course Code</label>
+              <input className={inputClass} value={courseCode} onChange={e => setCourseCode(e.target.value)} placeholder="CSE 2201" />
+            </div>
+            <div>
+              <label className={labelClass}>Credit Hours</label>
+              <input type="number" step="0.5" min="0.5" max="6" className={inputClass} value={creditHours} onChange={e => setCreditHours(e.target.value)} />
+            </div>
           </div>
-          <div><label className={labelClass}>Description</label><textarea className={inputClass} rows={2} value={description} onChange={e => setDescription(e.target.value)} /></div>
+          <div>
+            <label className={labelClass}>Description</label>
+            <textarea className={inputClass} rows={2} value={description} onChange={e => setDescription(e.target.value)} />
+          </div>
           <div>
             <label className={labelClass}>Enrollment Code</label>
             <div className="flex gap-2">
               <input className={inputClass} value={enrollCode} onChange={e => setEnrollCode(e.target.value.toUpperCase().slice(0, 20))} />
-              <button onClick={() => setEnrollCode(Math.random().toString(36).slice(2, 8).toUpperCase())} className="rounded-xl border border-border px-3 text-xs text-muted hover:border-primary hover:text-primary transition">Regen</button>
+              <button
+                onClick={() => setEnrollCode(Math.random().toString(36).slice(2, 8).toUpperCase())}
+                className="rounded-xl border border-border px-3 text-xs text-muted hover:border-primary hover:text-primary transition"
+              >Regen</button>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div><label className={labelClass}>Semester</label><input className={inputClass} value={semester} onChange={e => setSemester(e.target.value)} placeholder="Spring 2026" /></div>
-            <div><label className={labelClass}>Academic Year</label><input className={inputClass} value={academicYear} onChange={e => setAcademicYear(e.target.value)} placeholder="2025-2026" /></div>
+            <div>
+              <label className={labelClass}>Semester Label</label>
+              <input className={inputClass} value={semester} onChange={e => setSemester(e.target.value)} placeholder="Spring 2026" />
+            </div>
+            <div>
+              <label className={labelClass}>Academic Year</label>
+              <input className={inputClass} value={academicYear} onChange={e => setAcademicYear(e.target.value)} placeholder="2025-2026" />
+            </div>
           </div>
         </div>
         <div className="mt-5 flex justify-end gap-2">
@@ -132,7 +199,8 @@ function JoinCourseModal({ token, onClose, onSuccess }: { token: string; onClose
       <div className="relative w-full max-w-sm rounded-2xl bg-card p-6 shadow-xl">
         <h2 className="font-display text-lg font-bold text-text-primary mb-4">Join Course</h2>
         {error && <p className="mb-3 rounded-xl bg-red-50 px-4 py-2 text-sm text-red-600">{error}</p>}
-        <div><label className={labelClass}>Enrollment Code</label>
+        <div>
+          <label className={labelClass}>Enrollment Code</label>
           <input className={inputClass} value={code} onChange={e => setCode(e.target.value.toUpperCase())} placeholder="ABC123" maxLength={20} />
         </div>
         <div className="mt-5 flex justify-end gap-2">
@@ -146,11 +214,15 @@ function JoinCourseModal({ token, onClose, onSuccess }: { token: string; onClose
   )
 }
 
-// ── Course detail expanded view ───────────────────────────────────────────────
-
 type DetailTab = 'students' | 'resources'
 
-function CourseDetail({ token, course, role, onBack }: { token: string; course: ManualCourse; role: 'teacher' | 'student'; onBack: () => void }) {
+function CourseDetail({ token, course, role, userId, onBack }: {
+  token: string
+  course: ManualCourse
+  role: 'teacher' | 'student'
+  userId: string
+  onBack: () => void
+}) {
   const [activeTab, setActiveTab] = useState<DetailTab>(role === 'teacher' ? 'students' : 'resources')
   const [copied, setCopied] = useState<'code' | 'link' | null>(null)
 
@@ -175,7 +247,6 @@ function CourseDetail({ token, course, role, onBack }: { token: string; course: 
       transition={{ duration: 0.18 }}
       className="space-y-4"
     >
-      {/* Back + header */}
       <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-muted hover:text-primary transition">
         <ArrowLeft className="h-4 w-4" /> Back to all courses
       </button>
@@ -186,6 +257,11 @@ function CourseDetail({ token, course, role, onBack }: { token: string; course: 
             <div className="flex items-center gap-2 flex-wrap">
               <h2 className="font-display text-lg font-bold text-text-primary">{course.course_name}</h2>
               {course.course_code && <span className="rounded-full bg-primary/10 px-2.5 py-0.5 text-xs font-semibold text-primary">{course.course_code}</span>}
+              {course.semester_number != null && (
+                <span className="rounded-full bg-secondary/10 px-2.5 py-0.5 text-xs font-medium text-secondary">
+                  {semesterLabel(course.semester_number)}
+                </span>
+              )}
               {course.semester && <span className="rounded-full bg-border px-2.5 py-0.5 text-xs text-muted">{course.semester}</span>}
               {course.credit_hours && <span className="rounded-full bg-accent/10 px-2.5 py-0.5 text-xs text-accent">{course.credit_hours} cr</span>}
             </div>
@@ -215,7 +291,6 @@ function CourseDetail({ token, course, role, onBack }: { token: string; course: 
         )}
       </div>
 
-      {/* Inner tab bar */}
       {INNER_TABS.length > 1 && (
         <div className="flex gap-1 rounded-xl border border-border bg-background p-1 w-fit">
           {INNER_TABS.map(t => (
@@ -232,7 +307,6 @@ function CourseDetail({ token, course, role, onBack }: { token: string; course: 
         </div>
       )}
 
-      {/* Inner tab content */}
       <div className="rounded-card border border-border bg-card p-5 shadow-[var(--shadow-card)]">
         <AnimatePresence mode="wait">
           <motion.div key={activeTab} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.12 }}>
@@ -245,7 +319,7 @@ function CourseDetail({ token, course, role, onBack }: { token: string; course: 
               />
             )}
             {activeTab === 'resources' && (
-              <ResourcesPanel token={token} courseId={course.manual_course_id} role={role} />
+              <ResourcesPanel token={token} courseId={course.manual_course_id} role={role} userId={userId} />
             )}
           </motion.div>
         </AnimatePresence>
@@ -253,8 +327,6 @@ function CourseDetail({ token, course, role, onBack }: { token: string; course: 
     </motion.div>
   )
 }
-
-// ── Course card ───────────────────────────────────────────────────────────────
 
 function CourseCard({ course, role, onClick, copiedCode, onCopyCode }: {
   course: ManualCourse
@@ -281,6 +353,11 @@ function CourseCard({ course, role, onClick, copiedCode, onCopyCode }: {
               <h3 className="font-semibold text-sm text-text-primary truncate">{course.course_name}</h3>
               <div className="flex flex-wrap gap-1.5 mt-1">
                 {course.course_code && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">{course.course_code}</span>}
+                {course.semester_number != null && (
+                  <span className="rounded-full bg-secondary/10 px-2 py-0.5 text-[11px] font-medium text-secondary">
+                    {semesterLabel(course.semester_number)}
+                  </span>
+                )}
                 {course.semester && <span className="rounded-full bg-border px-2 py-0.5 text-[11px] text-muted">{course.semester}</span>}
                 {course.credit_hours && <span className="rounded-full bg-accent/10 px-2 py-0.5 text-[11px] text-accent">{course.credit_hours} cr</span>}
               </div>
@@ -309,9 +386,7 @@ function CourseCard({ course, role, onClick, copiedCode, onCopyCode }: {
   )
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
-
-export default function ManualCoursesTab({ token, role, userId }: Props) {
+export default function ManualCoursesTab({ token, role, userId, onCourseSelect }: Props) {
   const [courses, setCourses] = useState<ManualCourse[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
@@ -336,14 +411,24 @@ export default function ManualCoursesTab({ token, role, userId }: Props) {
     setTimeout(() => setCopiedCode(null), 2000)
   }
 
-  // If a course is selected, show its detail view
+  function selectCourse(course: ManualCourse) {
+    setSelectedCourse(course)
+    onCourseSelect?.(course)
+  }
+
+  function handleBack() {
+    setSelectedCourse(null)
+    onCourseSelect?.(null)
+  }
+
   if (selectedCourse) {
     return (
       <CourseDetail
         token={token}
         course={selectedCourse}
         role={role}
-        onBack={() => setSelectedCourse(null)}
+        userId={userId}
+        onBack={handleBack}
       />
     )
   }
@@ -381,7 +466,7 @@ export default function ManualCoursesTab({ token, role, userId }: Props) {
               key={course.manual_course_id}
               course={course}
               role={role}
-              onClick={() => setSelectedCourse(course)}
+              onClick={() => selectCourse(course)}
               copiedCode={copiedCode}
               onCopyCode={copyCode}
             />

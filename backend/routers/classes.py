@@ -76,9 +76,7 @@ def _compute_grade(marks: float, total: float) -> tuple[str, float]:
     if pct >= 55:  return ("B-", 2.75)
     if pct >= 50:  return ("C+", 2.50)
     if pct >= 45:  return ("C",  2.25)
-    if pct >= 40:  return ("C-", 2.00)
-    if pct >= 35:  return ("D+", 1.75)
-    if pct >= 33:  return ("D",  1.50)
+    if pct >= 40:  return ("D",  2.00)
     return ("F", 0.00)
 
 
@@ -112,13 +110,14 @@ def _notify_enrolled(manual_course_id: int, sender_id: str, title: str, body: st
 # ── MODELS ────────────────────────────────────────────────────────────────────
 
 class ManualCourseCreate(BaseModel):
-    course_name:  str            = Field(min_length=1, max_length=255)
-    course_code:  Optional[str]  = Field(default=None, max_length=50)
-    description:  Optional[str]  = None
-    credit_hours: float          = Field(default=3.0, gt=0)
-    enroll_code:  Optional[str]  = Field(default=None, max_length=20)
-    semester:     Optional[str]  = Field(default=None, max_length=50)
-    academic_year:Optional[str]  = Field(default=None, max_length=20)
+    course_name:     str            = Field(min_length=1, max_length=255)
+    course_code:     Optional[str]  = Field(default=None, max_length=50)
+    description:     Optional[str]  = None
+    credit_hours:    float          = Field(default=3.0, gt=0)
+    enroll_code:     Optional[str]  = Field(default=None, max_length=20)
+    semester:        Optional[str]  = Field(default=None, max_length=50)
+    academic_year:   Optional[str]  = Field(default=None, max_length=20)
+    semester_number: Optional[int]  = Field(default=None, ge=1, le=8)
 
 
 class JoinCourseRequest(BaseModel):
@@ -192,14 +191,15 @@ async def create_manual_course(body: ManualCourseCreate, authorization: Optional
         code = _gen_code()
 
     res = _supabase.table("manual_course").insert({
-        "instructor_id": instructor_id,
-        "course_name":   body.course_name,
-        "course_code":   body.course_code,
-        "description":   body.description,
-        "credit_hours":  body.credit_hours,
-        "enroll_code":   code,
-        "semester":      body.semester,
-        "academic_year": body.academic_year,
+        "instructor_id":   instructor_id,
+        "course_name":     body.course_name,
+        "course_code":     body.course_code,
+        "description":     body.description,
+        "credit_hours":    body.credit_hours,
+        "enroll_code":     code,
+        "semester":        body.semester,
+        "academic_year":   body.academic_year,
+        "semester_number": body.semester_number,
     }).execute()
     return res.data[0]
 
@@ -363,7 +363,7 @@ async def my_attendance_summary(authorization: Optional[str] = Header(default=No
         if not cid:
             continue
         name = (sess.get("course") or {}).get("course_name", f"Course {cid}")
-        stats.setdefault(cid, {"course_name": name, "total": 0, "present": 0, "absent": 0, "late": 0})
+        stats.setdefault(cid, {"course_id": cid, "course_name": name, "total": 0, "present": 0, "absent": 0, "late": 0})
         stats[cid]["total"] += 1
         s = r["status"]
         if s == "Present": stats[cid]["present"] += 1
@@ -417,16 +417,25 @@ async def create_exam(body: ExamCreate, authorization: Optional[str] = Header(de
 
 
 @router.get("/exams")
-async def list_exams(authorization: Optional[str] = Header(default=None)):
+async def list_exams(
+    course_id: Optional[int] = Query(default=None),
+    authorization: Optional[str] = Header(default=None),
+):
     user = await _auth(authorization)
     profile = _get_profile(user.id)
 
     if profile.get("role") == "teacher":
-        res = _supabase.table("exam").select("*").eq("created_by", user.id).order("created_at", desc=True).execute()
+        query = _supabase.table("exam").select("*").eq("created_by", user.id)
+        if course_id is not None:
+            query = query.eq("manual_course_id", course_id)
+        res = query.order("created_at", desc=True).execute()
         return {"exams": res.data or []}
 
     student_id = _require_student(profile)
-    exams = _supabase.table("exam").select("*").eq("is_published", True).order("created_at", desc=True).execute().data or []
+    query = _supabase.table("exam").select("*").eq("is_published", True)
+    if course_id is not None:
+        query = query.eq("manual_course_id", course_id)
+    exams = query.order("created_at", desc=True).execute().data or []
     if exams:
         ids = [e["exam_id"] for e in exams]
         marks = _supabase.table("exam_mark").select("*").eq("student_id", student_id).in_("exam_id", ids).execute().data or []
@@ -472,6 +481,24 @@ async def upsert_mark(exam_id: int, student_id: int, body: SingleMarkRequest, au
     except Exception:
         pass
 
+    # Auto-recalculate CGPA after mark entry
+    try:
+        result = _calc_cgpa(student_id)
+        _supabase.table("student").update({
+            "cgpa":          result["cgpa"],
+            "total_credits": int(result["total_credits"]),
+        }).eq("student_id", student_id).execute()
+        _supabase.table("cgpa_record").insert({
+            "student_id":    student_id,
+            "cgpa":          result["cgpa"],
+            "total_credits": result["total_credits"],
+            "total_points":  result["total_points"],
+            "exam_count":    result["exam_count"],
+            "source":        "exam_marks",
+        }).execute()
+    except Exception:
+        pass
+
     return res.data[0]
 
 
@@ -494,11 +521,17 @@ async def get_exam_marks(exam_id: int, authorization: Optional[str] = Header(def
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _calc_cgpa(student_id: int) -> dict:
-    marks = _supabase.table("exam_mark").select("*, exam:exam(exam_name, exam_type, total_marks, credit_hours)").eq("student_id", student_id).execute().data or []
+    marks = (
+        _supabase.table("exam_mark")
+        .select("*, exam:exam(exam_name, exam_type, total_marks, credit_hours, manual_course_id, manual_course:manual_course(course_name, course_code, semester_number))")
+        .eq("student_id", student_id)
+        .execute().data or []
+    )
     weighted, credits = 0.0, 0.0
     breakdown = []
     for m in marks:
         exam = m.get("exam") or {}
+        mc   = (exam.get("manual_course") or {})
         gp, ch = m.get("grade_points"), exam.get("credit_hours")
         if gp is not None and ch is not None:
             weighted += float(gp) * float(ch)
@@ -511,6 +544,8 @@ def _calc_cgpa(student_id: int) -> dict:
             "credit_hours":  ch,
             "marks_obtained":m.get("marks_obtained"),
             "total_marks":   exam.get("total_marks"),
+            "course_name":   mc.get("course_name"),
+            "course_code":   mc.get("course_code"),
         })
     cgpa = round(weighted / credits, 2) if credits > 0 else 0.0
     return {"cgpa": cgpa, "total_credits": credits, "total_points": weighted, "exam_count": len(marks), "breakdown": breakdown}

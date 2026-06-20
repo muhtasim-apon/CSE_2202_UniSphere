@@ -9,14 +9,14 @@ import AttendanceTab from './components/AttendanceTab'
 import ExamMarksTab from './components/ExamMarksTab'
 import CGPAView from './components/CGPAView'
 import InvitePopup from './components/InvitePopup'
-import { getCourseByJoinToken, joinByToken } from '@/app/lib/classesApi'
+import { getCourseByJoinToken, joinByToken, type ManualCourse } from '@/app/lib/classesApi'
 
 type Props = {
   userId: string
   role: 'teacher' | 'student'
 }
 
-const TABS = [
+const ALL_TABS = [
   { id: 'courses',    label: 'My Courses', icon: BookOpen },
   { id: 'attendance', label: 'Attendance', icon: CheckSquare },
   { id: 'exams',      label: 'Exam Marks', icon: FileText },
@@ -31,17 +31,34 @@ type JoinCoursePreview = {
   instructor_name: string
 }
 
+function EmptyCourseState() {
+  return (
+    <div className="rounded-card border border-border bg-card p-5 shadow-[var(--shadow-card)]">
+      <div className="text-center py-16">
+        <BookOpen className="h-12 w-12 text-border mx-auto mb-3" />
+        <p className="text-sm font-medium text-text-primary">No course selected</p>
+        <p className="text-xs text-muted mt-1">
+          Go to <strong>My Courses</strong> and click a course to view attendance and exams.
+        </p>
+      </div>
+    </div>
+  )
+}
+
 export default function ClassesClient({ userId, role }: Props) {
   const [activeTab, setActiveTab] = useState('courses')
   const [token, setToken] = useState<string | null>(null)
-  const [coursesKey, setCoursesKey] = useState(0) // force reload
+  const [coursesKey, setCoursesKey] = useState(0)
+  const [selectedCourse, setSelectedCourse] = useState<ManualCourse | null>(null)
+  const [cgpaKey, setCgpaKey] = useState(0)
 
-  // Join-by-URL-token state
   const [joinToken, setJoinToken] = useState<string | null>(null)
   const [joinPreview, setJoinPreview] = useState<JoinCoursePreview | null>(null)
   const [joinLoading, setJoinLoading] = useState(false)
   const [joining, setJoining] = useState(false)
   const [joinMsg, setJoinMsg] = useState<string | null>(null)
+
+  const TABS = role === 'teacher' ? ALL_TABS.filter(t => t.id !== 'cgpa') : ALL_TABS
 
   useEffect(() => {
     createClient().auth.getSession().then(({ data }) => {
@@ -49,7 +66,6 @@ export default function ClassesClient({ userId, role }: Props) {
     })
   }, [])
 
-  // Handle ?join= URL param
   useEffect(() => {
     if (!token || role !== 'student') return
     const params = new URLSearchParams(window.location.search)
@@ -91,12 +107,10 @@ export default function ClassesClient({ userId, role }: Props) {
 
   return (
     <div className="space-y-6">
-      {/* Invite popup — students only */}
       {role === 'student' && (
         <InvitePopup token={token} onCourseJoined={() => setCoursesKey(k => k + 1)} />
       )}
 
-      {/* Join-by-token confirmation modal */}
       <AnimatePresence>
         {(joinToken || joinMsg) && role === 'student' && (
           <motion.div
@@ -108,7 +122,10 @@ export default function ClassesClient({ userId, role }: Props) {
               initial={{ scale: 0.96, y: 8 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.96, opacity: 0 }}
               transition={{ type: 'spring', damping: 28, stiffness: 320 }}
             >
-              <button onClick={() => { setJoinToken(null); setJoinPreview(null); setJoinMsg(null) }} className="absolute right-4 top-4 text-muted hover:text-primary">
+              <button
+                onClick={() => { setJoinToken(null); setJoinPreview(null); setJoinMsg(null) }}
+                className="absolute right-4 top-4 text-muted hover:text-primary"
+              >
                 <X className="h-5 w-5" />
               </button>
 
@@ -135,8 +152,15 @@ export default function ClassesClient({ userId, role }: Props) {
                     <p className="text-xs text-muted">Instructor: {joinPreview.instructor_name}</p>
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={() => { setJoinToken(null); setJoinPreview(null) }} className="flex-1 rounded-xl border border-border px-4 py-2 text-sm font-semibold text-muted hover:border-primary hover:text-primary transition">Cancel</button>
-                    <button onClick={handleJoinConfirm} disabled={joining} className="flex-1 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-60">
+                    <button
+                      onClick={() => { setJoinToken(null); setJoinPreview(null) }}
+                      className="flex-1 rounded-xl border border-border px-4 py-2 text-sm font-semibold text-muted hover:border-primary hover:text-primary transition"
+                    >Cancel</button>
+                    <button
+                      onClick={handleJoinConfirm}
+                      disabled={joining}
+                      className="flex-1 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-60"
+                    >
                       {joining ? 'Joining…' : 'Join This Class →'}
                     </button>
                   </div>
@@ -147,7 +171,6 @@ export default function ClassesClient({ userId, role }: Props) {
         )}
       </AnimatePresence>
 
-      {/* Main card with tabs */}
       <div className="rounded-card border border-border bg-card p-5 shadow-[var(--shadow-card)]">
         <div className="bg-gradient-to-r from-primary via-secondary to-accent rounded-xl px-5 py-4 text-white mb-4">
           <h1 className="text-xl font-bold font-display">Classes</h1>
@@ -181,10 +204,42 @@ export default function ClassesClient({ userId, role }: Props) {
           exit={{ opacity: 0, y: -8 }}
           transition={{ duration: 0.18 }}
         >
-          {activeTab === 'courses'    && <ManualCoursesTab key={coursesKey} token={token} role={role} userId={userId} />}
-          {activeTab === 'attendance' && <AttendanceTab    token={token} role={role} />}
-          {activeTab === 'exams'      && <ExamMarksTab     token={token} role={role} userId={userId} />}
-          {activeTab === 'cgpa'       && <CGPAView         token={token} role={role} />}
+          {activeTab === 'courses' && (
+            <ManualCoursesTab
+              key={coursesKey}
+              token={token}
+              role={role}
+              userId={userId}
+              onCourseSelect={setSelectedCourse}
+            />
+          )}
+          {activeTab === 'attendance' && (
+            selectedCourse ? (
+              <AttendanceTab
+                token={token}
+                role={role}
+                courseId={selectedCourse.manual_course_id}
+                courseName={selectedCourse.course_name}
+              />
+            ) : <EmptyCourseState />
+          )}
+          {activeTab === 'exams' && (
+            selectedCourse ? (
+              <ExamMarksTab
+                token={token}
+                role={role}
+                userId={userId}
+                courseId={selectedCourse.manual_course_id}
+                courseName={selectedCourse.course_name}
+                courseCode={selectedCourse.course_code}
+                creditHours={selectedCourse.credit_hours}
+                onMarkSaved={() => setCgpaKey(k => k + 1)}
+              />
+            ) : <EmptyCourseState />
+          )}
+          {activeTab === 'cgpa' && (
+            <CGPAView token={token} role={role} refreshKey={cgpaKey} />
+          )}
         </motion.div>
       </AnimatePresence>
     </div>

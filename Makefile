@@ -14,9 +14,9 @@
 ifeq ($(OS),Windows_NT)
     PYTHON      := python
     # Paths relative to project root (used for install)
-    PIP         := backend/venv/bin/pip.exe
+    PIP         := backend/venv/Scripts/pip.exe
     # Path relative to backend/ dir (used after "cd backend &&")
-    UVICORN     := venv/bin/uvicorn.exe
+    UVICORN     := venv/Scripts/uvicorn.exe
     # npm.cmd avoids the "C:/Program Files/nodejs/npm" spaces issue
     NPM         := npm.cmd
     MKDIR       := mkdir
@@ -86,7 +86,7 @@ frontend: ## Start the Next.js dev server (http://localhost:3000)
 
 backend: ## Start the FastAPI dev server (http://localhost:8000)
 	@echo "[backend] Starting FastAPI..."
-	cd $(BACKEND_DIR) && venv\bin\uvicorn.exe main:app --reload --host 0.0.0.0 --port 8000
+	cd $(BACKEND_DIR) && $(UVICORN) main:app --reload --host 0.0.0.0 --port 8000
 
 # ── Clean ────────────────────────────────────────────────────
 

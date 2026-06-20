@@ -3,15 +3,20 @@
 import { useState, useEffect } from 'react'
 import { Plus, FileText, ChevronDown, ChevronUp, Info, Save } from 'lucide-react'
 import {
-  getExams, createExam, upsertMark,
-  getManualCourses, getExamMarks, getCourseStudents,
-  type Exam, type ExamMark, type ManualCourse, type CourseStudent,
+  getExamsByCourse, createExam, upsertMark,
+  getExamMarks, getCourseStudents,
+  type Exam, type ExamMark, type CourseStudent,
 } from '@/app/lib/classesApi'
 
 type Props = {
   token: string
   role: 'teacher' | 'student'
   userId: string
+  courseId: number
+  courseName: string
+  courseCode: string | null
+  creditHours: number
+  onMarkSaved?: () => void
 }
 
 const EXAM_TYPES = ['Midterm', 'Final', 'Quiz', 'Assignment', 'Lab', 'Viva', 'Presentation', 'Other']
@@ -25,10 +30,8 @@ const GRADE_LEGEND = [
   ['B-', '≥55%', 'bg-blue-100 text-blue-700'],
   ['C+', '≥50%', 'bg-amber-100 text-amber-700'],
   ['C',  '≥45%', 'bg-amber-100 text-amber-700'],
-  ['C-', '≥40%', 'bg-amber-100 text-amber-700'],
-  ['D+', '≥35%', 'bg-orange-100 text-orange-700'],
-  ['D',  '≥33%', 'bg-orange-100 text-orange-700'],
-  ['F',  '<33%', 'bg-red-100 text-red-700'],
+  ['D',  '≥40%', 'bg-orange-100 text-orange-700'],
+  ['F',  '<40%', 'bg-red-100 text-red-700'],
 ]
 
 const EXAM_TYPE_COLORS: Record<string, string> = {
@@ -45,24 +48,22 @@ const EXAM_TYPE_COLORS: Record<string, string> = {
 const inputClass = 'w-full rounded-xl border border-border bg-card px-4 py-2.5 text-sm focus:border-accent focus:ring-2 focus:ring-accent/20 focus:outline-none'
 const labelClass = 'mb-1 block text-sm font-medium text-text-primary'
 
-// ── Add Exam Modal (teacher only) ─────────────────────────────────────────────
-
-function AddExamModal({ token, onClose, onSuccess }: { token: string; onClose: () => void; onSuccess: () => void }) {
+function AddExamModal({ token, courseId, creditHoursDefault, onClose, onSuccess }: {
+  token: string
+  courseId: number
+  creditHoursDefault: number
+  onClose: () => void
+  onSuccess: () => void
+}) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [examName, setExamName] = useState('')
   const [examType, setExamType] = useState('Midterm')
   const [totalMarks, setTotalMarks] = useState('100')
-  const [creditHours, setCreditHours] = useState('3.0')
+  const [creditHours, setCreditHours] = useState(String(creditHoursDefault))
   const [examDate, setExamDate] = useState('')
   const [semester, setSemester] = useState('')
   const [description, setDescription] = useState('')
-  const [courses, setCourses] = useState<ManualCourse[]>([])
-  const [courseId, setCourseId] = useState<string>('')
-
-  useEffect(() => {
-    getManualCourses(token).then(r => setCourses(r.courses || [])).catch(() => {})
-  }, [token])
 
   async function handleSave() {
     if (!examName.trim()) { setError('Exam name is required'); return }
@@ -74,11 +75,11 @@ function AddExamModal({ token, onClose, onSuccess }: { token: string; onClose: (
         exam_name:        examName.trim(),
         exam_type:        examType,
         total_marks:      Number(totalMarks),
-        credit_hours:     Number(creditHours) || 3.0,
+        credit_hours:     Number(creditHours) || creditHoursDefault,
         exam_date:        examDate || undefined,
         semester:         semester || undefined,
         description:      description || undefined,
-        manual_course_id: courseId ? Number(courseId) : undefined,
+        manual_course_id: courseId,
       })
       onSuccess()
       onClose()
@@ -96,7 +97,7 @@ function AddExamModal({ token, onClose, onSuccess }: { token: string; onClose: (
         <div className="space-y-3">
           <div>
             <label className={labelClass}>Exam Name *</label>
-            <input className={inputClass} value={examName} onChange={e => setExamName(e.target.value)} placeholder="DBMS Midterm 2026" />
+            <input className={inputClass} value={examName} onChange={e => setExamName(e.target.value)} placeholder="Midterm 2026" />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -121,13 +122,6 @@ function AddExamModal({ token, onClose, onSuccess }: { token: string; onClose: (
             </div>
           </div>
           <div>
-            <label className={labelClass}>Course (optional)</label>
-            <select className={inputClass} value={courseId} onChange={e => setCourseId(e.target.value)}>
-              <option value="">Standalone / No course</option>
-              {courses.map(c => <option key={c.manual_course_id} value={c.manual_course_id}>{c.course_name}</option>)}
-            </select>
-          </div>
-          <div>
             <label className={labelClass}>Semester</label>
             <input className={inputClass} value={semester} onChange={e => setSemester(e.target.value)} placeholder="Spring 2026" />
           </div>
@@ -147,9 +141,13 @@ function AddExamModal({ token, onClose, onSuccess }: { token: string; onClose: (
   )
 }
 
-// ── Teacher: enter marks for all students in an exam ──────────────────────────
-
-function EnterMarksModal({ token, exam, onClose, onSuccess }: { token: string; exam: Exam; onClose: () => void; onSuccess: () => void }) {
+function EnterMarksModal({ token, exam, onClose, onSuccess, onMarkSaved }: {
+  token: string
+  exam: Exam
+  onClose: () => void
+  onSuccess: () => void
+  onMarkSaved?: () => void
+}) {
   const [marks, setMarks] = useState<Record<number, { marks: string; saved: boolean; saving: boolean; grade?: string }>>({})
   const [students, setStudents] = useState<CourseStudent[]>([])
   const [loading, setLoading] = useState(true)
@@ -158,21 +156,15 @@ function EnterMarksModal({ token, exam, onClose, onSuccess }: { token: string; e
   useEffect(() => {
     async function load() {
       try {
-        // 1. Get all enrolled students from the course
         let studentList: CourseStudent[] = []
         if (exam.manual_course_id) {
           const res = await getCourseStudents(token, exam.manual_course_id)
           studentList = res.students || []
         }
-
-        // 2. Get any marks already entered for this exam
         const marksRes = await getExamMarks(token, exam.exam_id)
         const existingMarks = (marksRes.marks || []) as ExamMark[]
         const marksMap = Object.fromEntries(existingMarks.map(m => [m.student_id, m]))
-
         setStudents(studentList)
-
-        // 3. Pre-fill with existing values; blank otherwise
         const init: typeof marks = {}
         for (const s of studentList) {
           const existing = marksMap[s.student_id]
@@ -205,6 +197,7 @@ function EnterMarksModal({ token, exam, onClose, onSuccess }: { token: string; e
         ...prev,
         [studentId]: { ...prev[studentId], saved: true, saving: false, grade: saved.grade ?? undefined },
       }))
+      onMarkSaved?.()
     } catch {
       setMarks(prev => ({ ...prev, [studentId]: { ...prev[studentId], saving: false } }))
     }
@@ -224,7 +217,7 @@ function EnterMarksModal({ token, exam, onClose, onSuccess }: { token: string; e
           <p className="text-sm text-muted text-center py-6">
             {exam.manual_course_id
               ? 'No students enrolled in this course yet.'
-              : 'This exam is not linked to a course. Link it to a course to enter marks per student.'}
+              : 'This exam is not linked to a course.'}
           </p>
         ) : (
           <div className="space-y-2">
@@ -234,9 +227,7 @@ function EnterMarksModal({ token, exam, onClose, onSuccess }: { token: string; e
               return (
                 <div key={sid} className="flex items-center gap-3 rounded-xl border border-border bg-background px-3 py-2.5">
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-text-primary truncate">
-                      {s.first_name} {s.last_name}
-                    </p>
+                    <p className="text-sm font-medium text-text-primary truncate">{s.first_name} {s.last_name}</p>
                     <p className="text-xs text-muted">{s.student_roll}</p>
                   </div>
                   {entry.grade && (
@@ -277,20 +268,23 @@ function EnterMarksModal({ token, exam, onClose, onSuccess }: { token: string; e
   )
 }
 
-// ── Grade chip ────────────────────────────────────────────────────────────────
-
 function GradeChip({ grade }: { grade?: string | null }) {
   if (!grade) return null
   const style = grade.startsWith('A') ? 'bg-emerald-100 text-emerald-700'
     : grade.startsWith('B') ? 'bg-blue-100 text-blue-700'
     : grade.startsWith('C') ? 'bg-amber-100 text-amber-700'
+    : grade === 'D' ? 'bg-orange-100 text-orange-700'
     : grade === 'F' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'
   return <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${style}`}>{grade}</span>
 }
 
-// ── Exam card ─────────────────────────────────────────────────────────────────
-
-function ExamCard({ exam, token, role, onRefresh }: { exam: Exam; token: string; role: string; onRefresh: () => void }) {
+function ExamCard({ exam, token, role, onRefresh, onMarkSaved }: {
+  exam: Exam
+  token: string
+  role: string
+  onRefresh: () => void
+  onMarkSaved?: () => void
+}) {
   const [expanded, setExpanded] = useState(false)
   const [showMarksModal, setShowMarksModal] = useState(false)
   const mark = exam.my_mark
@@ -304,28 +298,22 @@ function ExamCard({ exam, token, role, onRefresh }: { exam: Exam; token: string;
               <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${EXAM_TYPE_COLORS[exam.exam_type] || 'bg-gray-100 text-gray-700'}`}>
                 {exam.exam_type}
               </span>
-              {/* Students see their own grade chip */}
               {role === 'student' && <GradeChip grade={mark?.grade} />}
             </div>
             <h3 className="font-semibold text-sm text-text-primary mt-1.5">{exam.exam_name}</h3>
             <div className="flex flex-wrap gap-3 mt-1 text-xs text-muted">
               <span>Total: {exam.total_marks} marks</span>
               <span>Credit: {exam.credit_hours}</span>
-              {/* Student-only: show their result */}
               {role === 'student' && mark && (
                 <>
-                  <span className="font-medium text-text-primary">
-                    Score: {mark.marks_obtained}/{exam.total_marks}
-                  </span>
+                  <span className="font-medium text-text-primary">Score: {mark.marks_obtained}/{exam.total_marks}</span>
                   {mark.grade_points != null && <span>GP: {mark.grade_points}</span>}
                 </>
               )}
               {exam.exam_date && <span>{new Date(exam.exam_date).toLocaleDateString()}</span>}
             </div>
           </div>
-
           <div className="flex items-center gap-2 flex-shrink-0">
-            {/* Teacher: enter marks button */}
             {role === 'teacher' && (
               <button
                 onClick={() => setShowMarksModal(true)}
@@ -340,18 +328,13 @@ function ExamCard({ exam, token, role, onRefresh }: { exam: Exam; token: string;
           </div>
         </div>
 
-        {/* Expanded details */}
         {expanded && (
           <div className="mt-3 pt-3 border-t border-border">
             {role === 'student' && !mark && (
               <p className="text-xs text-muted italic">Your teacher hasn't entered marks for this exam yet.</p>
             )}
-            {exam.exam_date && (
-              <p className="text-xs text-muted">Date: {new Date(exam.exam_date).toLocaleDateString()}</p>
-            )}
-            {exam.semester && (
-              <p className="text-xs text-muted">Semester: {exam.semester}</p>
-            )}
+            {exam.exam_date && <p className="text-xs text-muted">Date: {new Date(exam.exam_date).toLocaleDateString()}</p>}
+            {exam.semester && <p className="text-xs text-muted">Semester: {exam.semester}</p>}
             {!!(exam as unknown as Record<string, unknown>).description && (
               <p className="text-xs text-muted mt-1">{(exam as unknown as Record<string, unknown>).description as string}</p>
             )}
@@ -360,15 +343,19 @@ function ExamCard({ exam, token, role, onRefresh }: { exam: Exam; token: string;
       </div>
 
       {showMarksModal && (
-        <EnterMarksModal token={token} exam={exam} onClose={() => setShowMarksModal(false)} onSuccess={onRefresh} />
+        <EnterMarksModal
+          token={token}
+          exam={exam}
+          onClose={() => setShowMarksModal(false)}
+          onSuccess={onRefresh}
+          onMarkSaved={onMarkSaved}
+        />
       )}
     </div>
   )
 }
 
-// ── Main tab ──────────────────────────────────────────────────────────────────
-
-export default function ExamMarksTab({ token, role, userId }: Props) {
+export default function ExamMarksTab({ token, role, courseId, courseName, courseCode, creditHours, onMarkSaved }: Props) {
   const [exams, setExams] = useState<Exam[]>([])
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
@@ -377,18 +364,22 @@ export default function ExamMarksTab({ token, role, userId }: Props) {
   const load = async () => {
     setLoading(true)
     try {
-      const res = await getExams(token)
+      const res = await getExamsByCourse(token, courseId)
       setExams(res.exams || [])
     } catch {}
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { load() }, [courseId])
 
   return (
     <div className="rounded-card border border-border bg-card p-5 shadow-[var(--shadow-card)]">
-      <div className="flex items-center justify-between mb-4">
+      <div className="mb-4">
         <h2 className="text-base font-semibold text-text-primary">Exam Marks</h2>
+        <p className="text-xs text-muted mt-0.5">{courseName}{courseCode ? ` · ${courseCode}` : ''}</p>
+      </div>
+
+      <div className="flex items-center justify-between mb-4">
         <div className="flex gap-2">
           <button
             onClick={() => setShowLegend(x => !x)}
@@ -396,21 +387,20 @@ export default function ExamMarksTab({ token, role, userId }: Props) {
           >
             <Info className="h-3.5 w-3.5" /> Grade Scale
           </button>
-          {/* Add Exam — teacher only */}
-          {role === 'teacher' && (
-            <button
-              onClick={() => setShowAdd(true)}
-              className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 transition"
-            >
-              <Plus className="h-3.5 w-3.5" /> Add Exam
-            </button>
-          )}
         </div>
+        {role === 'teacher' && (
+          <button
+            onClick={() => setShowAdd(true)}
+            className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 transition"
+          >
+            <Plus className="h-3.5 w-3.5" /> Add Exam
+          </button>
+        )}
       </div>
 
       {showLegend && (
         <div className="mb-4 rounded-xl border border-border bg-background p-3">
-          <h3 className="text-xs font-semibold text-muted mb-2 uppercase tracking-wide">Grade Scale</h3>
+          <h3 className="text-xs font-semibold text-muted mb-2 uppercase tracking-wide">DU Grade Scale</h3>
           <div className="flex flex-wrap gap-1.5">
             {GRADE_LEGEND.map(([g, pct, cls]) => (
               <span key={g} className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${cls}`}>{g} {pct}</span>
@@ -433,12 +423,27 @@ export default function ExamMarksTab({ token, role, userId }: Props) {
       ) : (
         <div className="space-y-3">
           {exams.map(exam => (
-            <ExamCard key={exam.exam_id} exam={exam} token={token} role={role} onRefresh={load} />
+            <ExamCard
+              key={exam.exam_id}
+              exam={exam}
+              token={token}
+              role={role}
+              onRefresh={load}
+              onMarkSaved={onMarkSaved}
+            />
           ))}
         </div>
       )}
 
-      {showAdd && <AddExamModal token={token} onClose={() => setShowAdd(false)} onSuccess={load} />}
+      {showAdd && (
+        <AddExamModal
+          token={token}
+          courseId={courseId}
+          creditHoursDefault={creditHours}
+          onClose={() => setShowAdd(false)}
+          onSuccess={load}
+        />
+      )}
     </div>
   )
 }

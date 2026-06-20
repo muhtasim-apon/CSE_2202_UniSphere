@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   FileText, Image as ImageIcon, Play, Music, File, ExternalLink,
-  Link2, Upload, Trash2, Plus, X, Download
+  Link2, Upload, Trash2, X, Download, Circle, CheckCircle2
 } from 'lucide-react'
 import { getCourseResources, uploadResource, deleteResource, type CourseResource } from '@/app/lib/classesApi'
 
@@ -12,6 +12,7 @@ type Props = {
   token: string
   courseId: number
   role: 'teacher' | 'student'
+  userId: string
 }
 
 const MAX_BYTES = 2_147_483_648 // 2 GB
@@ -21,6 +22,25 @@ function formatBytes(bytes: number): string {
   if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`
   if (bytes < 1_073_741_824) return `${(bytes / 1_048_576).toFixed(1)} MB`
   return `${(bytes / 1_073_741_824).toFixed(2)} GB`
+}
+
+const LS_KEY = (userId: string, resourceId: number) =>
+  `resource_done_${userId}_${resourceId}`
+
+function isCompleted(userId: string, resourceId: number): boolean {
+  try {
+    return localStorage.getItem(LS_KEY(userId, resourceId)) === '1'
+  } catch { return false }
+}
+
+function toggleCompleted(userId: string, resourceId: number): boolean {
+  try {
+    const key = LS_KEY(userId, resourceId)
+    const next = localStorage.getItem(key) !== '1'
+    if (next) localStorage.setItem(key, '1')
+    else       localStorage.removeItem(key)
+    return next
+  } catch { return false }
 }
 
 function ResourceIcon({ type }: { type: string }) {
@@ -111,9 +131,16 @@ function UploadModal({ token, courseId, onClose, onSuccess }: { token: string; c
                 <p className="text-xs text-muted mt-0.5">PDF, Images, Video, Audio, Documents · Up to 2 GB</p>
               </>
             )}
-            <input ref={fileRef} type="file" className="sr-only" onChange={e => { const f = e.target.files?.[0]; if (f) { setFile(f); if (!title) setTitle(f.name.replace(/\.[^.]+$/, '')) } }} />
+            <input
+              ref={fileRef}
+              type="file"
+              className="sr-only"
+              onChange={e => {
+                const f = e.target.files?.[0]
+                if (f) { setFile(f); if (!title) setTitle(f.name.replace(/\.[^.]+$/, '')) }
+              }}
+            />
           </div>
-
           <div>
             <label className="mb-1 block text-sm font-medium text-text-primary">Title *</label>
             <input className="w-full rounded-xl border border-border bg-card px-4 py-2.5 text-sm focus:border-accent focus:ring-2 focus:ring-accent/20 focus:outline-none" value={title} onChange={e => setTitle(e.target.value)} placeholder="Lecture 1 Notes" />
@@ -122,7 +149,6 @@ function UploadModal({ token, courseId, onClose, onSuccess }: { token: string; c
             <label className="mb-1 block text-sm font-medium text-text-primary">Description</label>
             <textarea className="w-full rounded-xl border border-border bg-card px-4 py-2.5 text-sm focus:border-accent focus:ring-2 focus:ring-accent/20 focus:outline-none" rows={2} value={description} onChange={e => setDescription(e.target.value)} />
           </div>
-
           {uploadPct !== null && (
             <div>
               <div className="flex justify-between text-xs text-muted mb-1">
@@ -206,12 +232,13 @@ function LinkModal({ token, courseId, onClose, onSuccess }: { token: string; cou
   )
 }
 
-export default function ResourcesPanel({ token, courseId, role }: Props) {
+export default function ResourcesPanel({ token, courseId, role, userId }: Props) {
   const [resources, setResources] = useState<CourseResource[]>([])
   const [loading, setLoading] = useState(true)
   const [showUpload, setShowUpload] = useState(false)
   const [showLink, setShowLink] = useState(false)
   const [deleting, setDeleting] = useState<number | null>(null)
+  const [done, setDone] = useState<Set<number>>(new Set())
 
   const load = async () => {
     setLoading(true)
@@ -223,6 +250,26 @@ export default function ResourcesPanel({ token, courseId, role }: Props) {
   }
 
   useEffect(() => { load() }, [courseId])
+
+  // Populate done set from localStorage after resources load
+  useEffect(() => {
+    if (resources.length === 0) return
+    const s = new Set<number>()
+    for (const r of resources) {
+      if (isCompleted(userId, r.resource_id)) s.add(r.resource_id)
+    }
+    setDone(s)
+  }, [resources, userId])
+
+  function handleToggleDone(resourceId: number) {
+    const next = toggleCompleted(userId, resourceId)
+    setDone(prev => {
+      const s = new Set(prev)
+      if (next) s.add(resourceId)
+      else       s.delete(resourceId)
+      return s
+    })
+  }
 
   async function handleDelete(r: CourseResource) {
     if (!confirm(`Delete "${r.title}"?`)) return
@@ -265,62 +312,87 @@ export default function ResourcesPanel({ token, courseId, role }: Props) {
       ) : (
         <div className="space-y-2">
           <AnimatePresence initial={false}>
-            {resources.map(r => (
-              <motion.div
-                key={r.resource_id}
-                layout
-                initial={{ opacity: 0, y: -4 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-                transition={{ duration: 0.18 }}
-                className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 hover:border-accent/40 transition"
-              >
-                <ResourceIcon type={r.resource_type} />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-sm font-medium text-text-primary truncate">{r.title}</p>
-                    <TypeBadge type={r.resource_type} />
+            {resources.map(r => {
+              const isDone = done.has(r.resource_id)
+              return (
+                <motion.div
+                  key={r.resource_id}
+                  layout
+                  initial={{ opacity: 0, y: -4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                  transition={{ duration: 0.18 }}
+                  className={`flex items-center gap-3 rounded-xl border px-4 py-3 hover:border-accent/40 transition ${
+                    isDone
+                      ? 'border-emerald-200 bg-emerald-50/40 border-l-4 border-l-emerald-400 opacity-70'
+                      : 'border-border bg-card'
+                  }`}
+                >
+                  <ResourceIcon type={r.resource_type} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className={`text-sm font-medium truncate ${isDone ? 'line-through text-muted' : 'text-text-primary'}`}>{r.title}</p>
+                      <TypeBadge type={r.resource_type} />
+                    </div>
+                    <div className="flex items-center gap-3 mt-0.5 text-xs text-muted">
+                      {r.file_size_bytes !== null && <span>{formatBytes(r.file_size_bytes)}</span>}
+                      <span>{new Date(r.uploaded_at).toLocaleDateString()}</span>
+                      <span>{r.download_count} downloads</span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 mt-0.5 text-xs text-muted">
-                    {r.file_size_bytes !== null && <span>{formatBytes(r.file_size_bytes)}</span>}
-                    <span>{new Date(r.uploaded_at).toLocaleDateString()}</span>
-                    <span>{r.download_count} downloads</span>
-                  </div>
-                </div>
-                <div className="flex items-center gap-1.5 flex-shrink-0">
-                  {isLink(r) ? (
-                    <a
-                      href={r.external_url || '#'}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:border-accent hover:text-accent transition"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" /> Open
-                    </a>
-                  ) : r.file_url ? (
-                    <a
-                      href={r.file_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      download={r.file_name || true}
-                      className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:border-accent hover:text-accent transition"
-                    >
-                      <Download className="h-3.5 w-3.5" /> Download
-                    </a>
-                  ) : null}
-                  {role === 'teacher' && (
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    {isLink(r) ? (
+                      <a
+                        href={r.external_url || '#'}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:border-accent hover:text-accent transition"
+                      >
+                        <ExternalLink className="h-3.5 w-3.5" /> Open
+                      </a>
+                    ) : r.file_url ? (
+                      <a
+                        href={r.file_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        download={r.file_name || true}
+                        className="flex items-center gap-1 rounded-lg border border-border px-2.5 py-1.5 text-xs text-muted hover:border-accent hover:text-accent transition"
+                      >
+                        <Download className="h-3.5 w-3.5" /> Download
+                      </a>
+                    ) : null}
+
+                    {/* Mark as Completed toggle */}
                     <button
-                      onClick={() => handleDelete(r)}
-                      disabled={deleting === r.resource_id}
-                      className="text-red-400 hover:text-red-600 transition disabled:opacity-50 p-1"
-                      title="Delete resource"
+                      onClick={() => handleToggleDone(r.resource_id)}
+                      title={isDone ? 'Mark as not completed' : 'Mark as completed'}
+                      className={`flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium transition ${
+                        isDone
+                          ? 'text-emerald-600 hover:text-emerald-700'
+                          : 'text-muted hover:text-emerald-600'
+                      }`}
                     >
-                      <Trash2 className="h-4 w-4" />
+                      {isDone
+                        ? <CheckCircle2 className="h-4 w-4" />
+                        : <Circle className="h-4 w-4" />
+                      }
+                      <span className="hidden sm:inline">{isDone ? 'Completed' : 'Mark done'}</span>
                     </button>
-                  )}
-                </div>
-              </motion.div>
-            ))}
+
+                    {role === 'teacher' && (
+                      <button
+                        onClick={() => handleDelete(r)}
+                        disabled={deleting === r.resource_id}
+                        className="text-red-400 hover:text-red-600 transition disabled:opacity-50 p-1"
+                        title="Delete resource"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                </motion.div>
+              )
+            })}
           </AnimatePresence>
         </div>
       )}

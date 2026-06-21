@@ -23,6 +23,7 @@ export type ChatRoom = {
   } | null
   unread_count?: number
   other_avatar_url?: string | null
+  avatar_url?: string | null
 }
 
 export type ChatMessage = {
@@ -78,6 +79,8 @@ export type ChatRequest = {
   to_id: string
   status: 'pending' | 'accepted' | 'declined'
   created_at: string
+  room_id: string | null
+  room_title: string | null
   sender: { display_name: string | null; avatar_url: string | null } | null
 }
 
@@ -118,7 +121,7 @@ export async function openAdvisorRoom(token: string): Promise<ChatRoom & { advis
 }
 
 export async function createGroupRoom(
-  data: { title: string; member_emails: string[]; password?: string },
+  data: { title: string; member_emails: string[]; member_ids?: string[]; password?: string },
   token: string
 ): Promise<ChatRoom & { room_code: string; not_found_emails: string[] }> {
   const res = await apiFetch(`${BASE}/api/chat/rooms/group`, {
@@ -151,6 +154,64 @@ export async function deleteRoom(roomId: string, token: string): Promise<void> {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
   })
+}
+
+export type RoomMember = {
+  profile_id: string
+  member_role: string
+  nickname: string | null
+  joined_at: string | null
+  profiles: { display_name: string | null; avatar_url: string | null } | null
+}
+
+export type PendingInvite = {
+  to_id: string
+  created_at: string
+  invitee: { display_name: string | null; avatar_url: string | null } | null
+}
+
+export async function getRoomMembers(roomId: string, token: string): Promise<{ members: RoomMember[]; pending_invites: PendingInvite[] }> {
+  const res = await apiFetch(`${BASE}/api/chat/rooms/${roomId}`, { headers: authHeader(token) })
+  const data = await res.json()
+  return { members: data.members ?? [], pending_invites: data.pending_invites ?? [] }
+}
+
+export async function setMemberNickname(roomId: string, profileId: string, nickname: string | null, token: string): Promise<void> {
+  await apiFetch(`${BASE}/api/chat/rooms/${roomId}/members/${profileId}/nickname`, {
+    method: 'PATCH',
+    headers: authHeader(token),
+    body: JSON.stringify({ nickname }),
+  })
+}
+
+export async function inviteMember(roomId: string, profileId: string, token: string): Promise<void> {
+  await apiFetch(`${BASE}/api/chat/rooms/${roomId}/invite`, {
+    method: 'POST',
+    headers: authHeader(token),
+    body: JSON.stringify({ profile_id: profileId }),
+  })
+}
+
+export async function setGroupAvatar(roomId: string, file: File, token: string): Promise<string> {
+  const form = new FormData()
+  form.append('file', file)
+  const res = await fetch(`${BASE}/api/chat/rooms/${roomId}/avatar`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  })
+  if (!res.ok) throw new Error(`Avatar upload failed: ${res.status}`)
+  const data = await res.json()
+  return data.avatar_url
+}
+
+export async function renameRoom(roomId: string, title: string, token: string): Promise<ChatRoom> {
+  const res = await apiFetch(`${BASE}/api/chat/rooms/${roomId}`, {
+    method: 'PATCH',
+    headers: authHeader(token),
+    body: JSON.stringify({ title }),
+  })
+  return res.json()
 }
 
 // ── Messages ───────────────────────────────────────────────────────────────

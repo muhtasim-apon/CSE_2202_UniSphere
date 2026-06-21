@@ -18,6 +18,7 @@ export default function ChatroomClient({ userId, displayName, avatarUrl }: { use
   const [mainTab, setMainTab] = useState<MainTab>('chats')
   const [pendingCount, setPendingCount] = useState(0)
   const [advisorError, setAdvisorError] = useState('')
+  const [roomListTab, setRoomListTab] = useState<'direct' | 'advisor' | 'group'>('direct')
   const tokenRef = useRef<string | null>(null)
   const activeRoomRef = useRef<ChatRoom | null>(null)
 
@@ -136,7 +137,11 @@ export default function ChatroomClient({ userId, displayName, avatarUrl }: { use
   }
 
   async function handleNewRoom(room: ChatRoom, switchTab = true) {
-    if (switchTab) setMainTab('chats')
+    if (switchTab) {
+      setMainTab('chats')
+      const subTab = room.type === 'group' ? 'group' : room.type === 'advisor' ? 'advisor' : 'direct'
+      setRoomListTab(subTab)
+    }
     // Fetch enriched rooms first so title/avatar are correct from the start
     const t = tokenRef.current
     let enrichedRoom = room
@@ -224,6 +229,8 @@ export default function ChatroomClient({ userId, displayName, avatarUrl }: { use
               onNewRoom={handleNewRoom}
               token={token}
               onOpenAdvisor={handleOpenAdvisor}
+              activeTab={roomListTab}
+              onTabChange={setRoomListTab}
             />
           )}
           {mainTab === 'people' && (
@@ -254,7 +261,7 @@ export default function ChatroomClient({ userId, displayName, avatarUrl }: { use
             roomId={activeRoom.id}
             roomType={activeRoom.type}
             roomTitle={activeRoom.title ?? (activeRoom.type === 'group' ? 'Group Chat' : 'Advisor Chat')}
-            roomAvatar={activeRoom.other_avatar_url}
+            roomAvatar={activeRoom.type === 'group' ? (activeRoom.avatar_url ?? null) : (activeRoom.other_avatar_url ?? null)}
             roomCode={activeRoom.room_code}
             roomCreatedBy={activeRoom.created_by}
             currentUserId={userId}
@@ -265,6 +272,10 @@ export default function ChatroomClient({ userId, displayName, avatarUrl }: { use
               setRooms(prev => prev.filter(r => r.id !== rid))
               setActiveRoom(null)
               activeRoomRef.current = null
+            }}
+            onRoomRenamed={(rid, newTitle) => {
+              setRooms(prev => prev.map(r => r.id === rid ? { ...r, title: newTitle } : r))
+              setActiveRoom(prev => prev?.id === rid ? { ...prev, title: newTitle } : prev)
             }}
             onNewMessage={(roomId, senderId, body, createdAt, attachmentType) => {
               setRooms(prev => prev.map(r => {

@@ -14,8 +14,11 @@ const ALL_REACTIONS = Object.entries(REACTION_EMOJIS) as [ReactionType, string][
 type Props = {
   message: ChatMessage
   currentUserId: string
-  grouped: boolean       // same sender as previous message
-  groupedNext: boolean   // same sender as next message
+  grouped: boolean
+  groupedNext: boolean
+  isGroup?: boolean
+  displayName?: string | null
+  senderAvatar?: string | null
   onReply: (msg: ChatMessage) => void
   onEdit: (msg: ChatMessage) => void
   onDelete: (msgId: string) => void
@@ -24,10 +27,23 @@ type Props = {
 }
 
 export default function MessageBubble({
-  message, currentUserId, grouped, groupedNext, onReply, onEdit, onDelete, onReact, onUnreact,
+  message, currentUserId, grouped, groupedNext, isGroup, displayName, senderAvatar,
+  onReply, onEdit, onDelete, onReact, onUnreact,
 }: Props) {
   const [showPicker, setShowPicker] = useState(false)
   const [showTime, setShowTime] = useState(false)
+
+  // System message (nickname change, etc.) — render as center pill
+  if (message.body?.startsWith('{"_sys"')) {
+    try {
+      const sys = JSON.parse(message.body)
+      if (sys._sys) return (
+        <div className="flex justify-center my-2">
+          <span className="text-[11px] text-muted bg-secondary/30 rounded-full px-3 py-1">{sys.text}</span>
+        </div>
+      )
+    } catch { /* fall through to normal render */ }
+  }
   const isOwn = message.sender_id === currentUserId
 
   const reactionMap: Record<string, string[]> = {}
@@ -39,7 +55,9 @@ export default function MessageBubble({
     message.reactions.filter(r => r.user_id === currentUserId).map(r => r.reaction)
   )
 
-  const senderInitial = message.sender?.display_name?.[0]?.toUpperCase() ?? '?'
+  const resolvedAvatar = message.sender?.avatar_url ?? senderAvatar ?? null
+  const resolvedName   = message.sender?.display_name ?? displayName ?? null
+  const senderInitial  = resolvedName?.[0]?.toUpperCase() ?? '?'
   const timeStr = new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
   // Bubble corner shape based on position in group
@@ -66,8 +84,8 @@ export default function MessageBubble({
       <div className="flex-shrink-0 w-8">
         {!grouped && (
           <div className="w-8 h-8 rounded-full bg-accent/20 text-accent flex items-center justify-center text-xs font-bold overflow-hidden">
-            {message.sender?.avatar_url
-              ? <img src={message.sender.avatar_url} alt="" className="w-full h-full object-cover" />
+            {resolvedAvatar
+              ? <img src={resolvedAvatar} alt="" className="w-full h-full object-cover" />
               : senderInitial
             }
           </div>
@@ -75,6 +93,11 @@ export default function MessageBubble({
       </div>
 
       <div className={`max-w-[70%] flex flex-col ${isOwn ? 'items-end' : 'items-start'}`}>
+
+        {/* Sender name label — group chats, first message in a group, not own */}
+        {isGroup && !isOwn && !grouped && displayName && (
+          <span className="text-[11px] font-medium text-accent mb-0.5 px-1">{displayName}</span>
+        )}
 
         {/* Quoted reply */}
         {message.reply && (

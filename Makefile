@@ -14,9 +14,9 @@
 ifeq ($(OS),Windows_NT)
     PYTHON      := python
     # Paths relative to project root (used for install)
-    PIP         := backend/venv/Scripts/pip.exe
+    PIP         := backend/venv/bin/pip.exe
     # Path relative to backend/ dir (used after "cd backend &&")
-    UVICORN     := venv/Scripts/uvicorn.exe
+    UVICORN     := venv\bin\uvicorn.exe
     # npm.cmd avoids the "C:/Program Files/nodejs/npm" spaces issue
     NPM         := npm.cmd
     MKDIR       := mkdir
@@ -71,8 +71,8 @@ install-backend: ## Create Python venv and install pip packages
 	@echo "[backend] Creating Python virtual environment..."
 	$(PYTHON) -m venv $(BACKEND_DIR)/venv
 	@echo "[backend] Installing Python packages..."
-	$(PIP) install --upgrade pip --quiet
-	$(PIP) install -r $(BACKEND_DIR)/requirements.txt
+	$(BACKEND_DIR)/venv/bin/python.exe -m pip install --upgrade pip --quiet
+	$(BACKEND_DIR)/venv/bin/python.exe -m pip install --only-binary=:all: -r $(BACKEND_DIR)/requirements.txt
 	@echo "[backend] Done."
 
 # ── Dev servers ──────────────────────────────────────────────

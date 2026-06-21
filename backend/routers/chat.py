@@ -71,6 +71,7 @@ class DirectRoomRequest(BaseModel):
 class GroupRoomRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     member_emails: list[str] = Field(default=[])
+    member_ids: list[str] = Field(default=[])
     password: Optional[str] = None
 
 class JoinRoomRequest(BaseModel):
@@ -204,11 +205,11 @@ async def send_request(
 
 @router.get("/requests")
 async def list_requests(authorization: Optional[str] = Header(default=None)):
-    """Return incoming pending requests for the caller."""
+    """Return incoming pending requests (direct + group invites) for the caller."""
     user = await _auth(authorization)
     res = (
         _supabase.table("chat_request")
-        .select("id, from_id, to_id, status, created_at, sender:profiles!from_id(display_name, avatar_url)")
+        .select("id, from_id, to_id, status, created_at, room_id, room_title, sender:profiles!from_id(display_name, avatar_url)")
         .eq("to_id", user.id)
         .eq("status", "pending")
         .order("created_at", desc=True)
@@ -227,7 +228,7 @@ async def accept_request(
 
     req = (
         _supabase.table("chat_request")
-        .select("id, from_id, to_id, status")
+        .select("id, from_id, to_id, status, room_id")
         .eq("id", request_id)
         .single()
         .execute()
@@ -239,15 +240,49 @@ async def accept_request(
     if req.data["status"] != "pending":
         raise HTTPException(status_code=409, detail="Request already resolved")
 
-    # Create (or fetch) the direct room first — pass caller's profile_id explicitly
-    # because service-role bypasses auth.uid()
+    if req.data.get("room_id"):
+        # Group invite — add caller to the group room
+        group_room_id = req.data["room_id"]
+        existing = (
+            _supabase.table("chat_room_member")
+            .select("profile_id")
+            .eq("room_id", group_room_id)
+            .eq("profile_id", user.id)
+            .limit(1)
+            .execute()
+        )
+        if not existing.data:
+            _supabase.table("chat_room_member").insert({
+                "room_id": group_room_id,
+                "profile_id": user.id,
+                "member_role": "member",
+            }).execute()
+
+            # Insert a system join message visible to everyone
+            profile = _supabase.table("profiles").select("display_name").eq("id", user.id).maybe_single().execute()
+            first_name = (profile.data or {}).get("display_name", "Someone").split()[0] if profile and profile.data else "Someone"
+            import json as _json
+            _supabase.table("chat_message").insert({
+                "room_id": group_room_id,
+                "sender_id": user.id,
+                "body": _json.dumps({"_sys": "joined", "text": f"{first_name} joined the group"}),
+            }).execute()
+
+        _supabase.table("chat_request").update({
+            "status": "accepted",
+            "responded_at": datetime.now(timezone.utc).isoformat(),
+        }).eq("id", request_id).execute()
+        room = _supabase.table("chat_room").select("*").eq("id", group_room_id).single().execute()
+        return {"room": room.data, "request_id": request_id}
+
+    # Direct chat request — create/fetch direct room
     room_res = _supabase.rpc(
         "fn_get_or_create_direct_room",
         {"p_other_profile_id": req.data["from_id"], "p_my_profile_id": user.id},
     ).execute()
     room_id = room_res.data
 
-    # Only mark accepted after room is successfully created
+    # Mark accepted after room is successfully created
     _supabase.table("chat_request").update({
         "status": "accepted",
         "responded_at": datetime.now(timezone.utc).isoformat(),
@@ -515,10 +550,28 @@ async def create_group_room(
         except Exception:
             not_found.append(email)
 
-    members = [{"room_id": room_id, "profile_id": user.id, "member_role": "owner"}]
+    # Also add directly-specified profile IDs
+    for pid in body.member_ids:
+        if pid and pid != user.id and pid not in resolved_ids:
+            resolved_ids.append(pid)
+
+    # Owner is added directly; everyone else gets a join invite
+    _supabase.table("chat_room_member").insert(
+        {"room_id": room_id, "profile_id": user.id, "member_role": "owner"}
+    ).execute()
+
     for pid in resolved_ids:
-        members.append({"room_id": room_id, "profile_id": pid, "member_role": "member"})
-    _supabase.table("chat_room_member").insert(members).execute()
+        try:
+            _supabase.table("chat_request").insert({
+                "from_id": user.id,
+                "to_id": pid,
+                "status": "pending",
+                "room_id": room_id,
+                "room_title": body.title,
+            }).execute()
+        except Exception:
+            # Skip if a pending invite already exists for this (from, to, room) combo
+            pass
 
     return {**room, "room_code": room_code, "not_found_emails": not_found}
 
@@ -536,6 +589,28 @@ async def join_room(
     room_id = res.data
     room = _supabase.table("chat_room").select("*").eq("id", room_id).single().execute()
     return room.data
+
+
+class RenameRoomRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+@router.patch("/rooms/{room_id}")
+async def rename_room(
+    room_id: str,
+    body: RenameRoomRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    user = await _auth(authorization)
+    _assert_member(room_id, user.id)
+    room = _supabase.table("chat_room").select("created_by, type").eq("id", room_id).single().execute()
+    if not room.data:
+        raise HTTPException(status_code=404, detail="Room not found")
+    if room.data["type"] != "group":
+        raise HTTPException(status_code=400, detail="Only group rooms can be renamed")
+    if room.data["created_by"] != user.id:
+        raise HTTPException(status_code=403, detail="Only the owner can rename this room")
+    updated = _supabase.table("chat_room").update({"title": body.title}).eq("id", room_id).execute()
+    return updated.data[0]
 
 
 @router.delete("/rooms/{room_id}", status_code=204)
@@ -582,11 +657,118 @@ async def get_room(
 
     members_res = (
         _supabase.table("chat_room_member")
-        .select("profile_id, member_role, joined_at, profiles(display_name, avatar_url)")
+        .select("profile_id, member_role, nickname, joined_at, profiles(display_name, avatar_url)")
         .eq("room_id", room_id)
         .execute()
     )
-    return {**room.data, "members": members_res.data}
+    invites_res = (
+        _supabase.table("chat_request")
+        .select("to_id, created_at, invitee:profiles!to_id(display_name, avatar_url)")
+        .eq("room_id", room_id)
+        .eq("status", "pending")
+        .execute()
+    )
+    return {**room.data, "members": members_res.data, "pending_invites": invites_res.data or []}
+
+
+@router.post("/rooms/{room_id}/avatar")
+async def set_group_avatar(
+    room_id: str,
+    file: UploadFile = File(...),
+    authorization: Optional[str] = Header(default=None),
+):
+    user = await _auth(authorization)
+    _assert_member(room_id, user.id)
+
+    room = _supabase.table("chat_room").select("type, created_by").eq("id", room_id).single().execute()
+    if not room.data or room.data["type"] != "group":
+        raise HTTPException(status_code=400, detail="Not a group room")
+    if room.data["created_by"] != user.id:
+        raise HTTPException(status_code=403, detail="Only the owner can set the avatar")
+
+    content = await file.read()
+    if len(content) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image must be under 5 MB")
+
+    # Always store as JPEG with a fixed path so re-uploads overwrite cleanly
+    mime = "image/jpeg"
+    path = f"group-avatars/{room_id}.jpg"
+
+    # Remove any existing avatar (all possible extensions) before re-uploading
+    for old_ext in ("jpg", "jpeg", "png", "webp", "gif"):
+        try:
+            _supabase.storage.from_("chat-attachments").remove([f"group-avatars/{room_id}.{old_ext}"])
+        except Exception:
+            pass
+
+    _supabase.storage.from_("chat-attachments").upload(
+        path, content, {"content-type": mime, "x-upsert": "true"}
+    )
+    # Bust cache by appending a timestamp query param
+    import time
+    base_url = _supabase.storage.from_("chat-attachments").get_public_url(path)
+    url = f"{base_url}?t={int(time.time())}"
+
+    _supabase.table("chat_room").update({"avatar_url": url}).eq("id", room_id).execute()
+    return {"avatar_url": url}
+
+
+class SetNicknameRequest(BaseModel):
+    nickname: Optional[str] = None  # None = clear nickname
+
+@router.patch("/rooms/{room_id}/members/{profile_id}/nickname", status_code=200)
+async def set_member_nickname(
+    room_id: str,
+    profile_id: str,
+    body: SetNicknameRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    user = await _auth(authorization)
+    _assert_member(room_id, user.id)
+    _supabase.table("chat_room_member").update({"nickname": body.nickname or None}).eq("room_id", room_id).eq("profile_id", profile_id).execute()
+    return {"ok": True}
+
+
+class InviteMemberRequest(BaseModel):
+    profile_id: str
+
+@router.post("/rooms/{room_id}/invite", status_code=201)
+async def invite_member(
+    room_id: str,
+    body: InviteMemberRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    user = await _auth(authorization)
+    _assert_member(room_id, user.id)
+
+    room = _supabase.table("chat_room").select("type, title").eq("id", room_id).single().execute()
+    if not room.data or room.data["type"] != "group":
+        raise HTTPException(status_code=400, detail="Not a group room")
+
+    # Skip if already a member
+    existing = (
+        _supabase.table("chat_room_member")
+        .select("profile_id")
+        .eq("room_id", room_id)
+        .eq("profile_id", body.profile_id)
+        .limit(1)
+        .execute()
+    )
+    if existing.data:
+        raise HTTPException(status_code=409, detail="Already a member")
+
+    try:
+        _supabase.table("chat_request").insert({
+            "from_id": user.id,
+            "to_id": body.profile_id,
+            "status": "pending",
+            "room_id": room_id,
+            "room_title": room.data["title"],
+        }).execute()
+    except Exception:
+        raise HTTPException(status_code=409, detail="Invite already sent")
+
+    return {"ok": True}
 
 
 # ── MESSAGES ──────────────────────────────────────────────────────────────────

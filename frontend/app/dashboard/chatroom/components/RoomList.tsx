@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { Plus, Hash, Users, BookOpen, MessageCircle, Image, Video, Mic, Music, File } from 'lucide-react'
 import type { ChatRoom } from '@/app/lib/chatApi'
@@ -16,6 +16,8 @@ type Props = {
   onNewRoom: (room: ChatRoom) => void
   token: string
   onOpenAdvisor: () => void
+  activeTab?: Tab
+  onTabChange?: (tab: Tab) => void
 }
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
@@ -50,10 +52,21 @@ function formatTime(iso: string) {
   return `${Math.floor(h / 24)}d`
 }
 
-export default function RoomList({ rooms, activeRoomId, onSelect, onNewRoom, token, onOpenAdvisor }: Props) {
-  const [tab, setTab] = useState<Tab>('direct')
+export default function RoomList({ rooms, activeRoomId, onSelect, onNewRoom, token, onOpenAdvisor, activeTab, onTabChange }: Props) {
+  const [tab, setTab] = useState<Tab>(activeTab ?? 'direct')
+
+  useEffect(() => { if (activeTab) setTab(activeTab) }, [activeTab])
   const [showGroup, setShowGroup] = useState(false)
   const [showJoin, setShowJoin] = useState(false)
+  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'))
+
+  useEffect(() => {
+    const obs = new MutationObserver(() =>
+      setIsDark(document.documentElement.classList.contains('dark'))
+    )
+    obs.observe(document.documentElement, { attributeFilter: ['class'] })
+    return () => obs.disconnect()
+  }, [])
 
   const filtered = rooms
     .filter(r =>
@@ -79,7 +92,7 @@ export default function RoomList({ rooms, activeRoomId, onSelect, onNewRoom, tok
         {TABS.map(t => (
           <button
             key={t.id}
-            onClick={() => setTab(t.id)}
+            onClick={() => { setTab(t.id); onTabChange?.(t.id) }}
             className={`flex-1 flex items-center justify-center gap-1 py-2 text-xs font-medium transition-colors duration-theme ${
               tab === t.id
                 ? 'text-accent border-b-2 border-accent'
@@ -108,14 +121,18 @@ export default function RoomList({ rooms, activeRoomId, onSelect, onNewRoom, tok
           </p>
         )}
 
-        {filtered.map(room => (
-          <motion.button
+        {filtered.map(room => {
+          const hoverColor  = isDark ? '#266ca9' : '#e2e2b0'
+          const activeColor = isDark ? '#041d56' : '#e2ea71'
+          const isActive = activeRoomId === room.id
+          return (
+          <button
             key={room.id}
-            whileHover={{ backgroundColor: 'var(--color-secondary)' }}
             onClick={() => onSelect(room)}
-            className={`w-full text-left px-4 py-3 flex items-start gap-3 transition-colors border-b border-border/50 ${
-              activeRoomId === room.id ? 'bg-secondary/40' : ''
-            }`}
+            onMouseEnter={e => (e.currentTarget.style.backgroundColor = hoverColor)}
+            onMouseLeave={e => (e.currentTarget.style.backgroundColor = isActive ? activeColor : '')}
+            className="w-full text-left px-4 py-3 flex items-start gap-3 border-b border-border/50"
+            style={isActive ? { backgroundColor: activeColor } : undefined}
           >
             {/* Avatar */}
             <div className="w-9 h-9 rounded-full bg-accent/20 text-accent flex items-center justify-center flex-shrink-0 text-sm font-bold overflow-hidden">
@@ -157,8 +174,9 @@ export default function RoomList({ rooms, activeRoomId, onSelect, onNewRoom, tok
                 </p>
               )}
             </div>
-          </motion.button>
-        ))}
+          </button>
+          )
+        })}
       </div>
 
       {/* Action buttons — only for group tab */}

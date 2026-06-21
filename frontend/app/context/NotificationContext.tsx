@@ -1,15 +1,22 @@
 'use client'
 
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
+import { createClient } from '@/lib/supabase/client'
 
 export type AppNotification = {
   id: string
   title: string
   body: string
   href: string
-  type: 'notice' | 'profile' | 'system' | 'new_project' | 'new_certificate' | 'new_research_paper' | 'new_comment' | 'new_reaction' | 'new_rating'
+  type: 'notice' | 'profile' | 'system' | 'new_project' | 'new_certificate' | 'new_research_paper' | 'new_comment' | 'new_reaction' | 'new_rating' | 'new_notice' | 'new_event' | 'general'
   timestamp: string
   read: boolean
+}
+
+type AddPayload = Omit<AppNotification, 'id' | 'read' | 'timestamp'> & {
+  id?: string
+  timestamp?: string
+  read?: boolean
 }
 
 type NotificationContextType = {
@@ -19,12 +26,25 @@ type NotificationContextType = {
   clearAll: () => void
   markRead: (id: string) => void
   removeNotification: (id: string) => void
-  addNotification: (n: Omit<AppNotification, 'id' | 'read' | 'timestamp'>) => void
+  addNotification: (n: AddPayload) => void
 }
 
 const NotificationContext = createContext<NotificationContextType | null>(null)
 
 const STORAGE_KEY = 'eduhub_notifications'
+
+async function markAllReadInDb() {
+  try {
+    const supabase = createClient()
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) return
+    await supabase
+      .from('notification')
+      .update({ is_read: true })
+      .eq('recipient_id', session.user.id)
+      .eq('is_read', false)
+  } catch {}
+}
 
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<AppNotification[]>([])
@@ -42,14 +62,20 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     } catch {}
   }, [notifications])
 
-  const addNotification = useCallback((n: Omit<AppNotification, 'id' | 'read' | 'timestamp'>) => {
+  const addNotification = useCallback((n: AddPayload) => {
     const newNote: AppNotification = {
-      ...n,
-      id: crypto.randomUUID(),
-      read: false,
-      timestamp: new Date().toISOString(),
+      type: n.type,
+      title: n.title,
+      body: n.body,
+      href: n.href,
+      id: n.id ?? crypto.randomUUID(),
+      read: n.read ?? false,
+      timestamp: n.timestamp ?? new Date().toISOString(),
     }
-    setNotifications(prev => [newNote, ...prev].slice(0, 50))
+    setNotifications(prev => {
+      if (prev.some(e => e.id === newNote.id)) return prev
+      return [newNote, ...prev].slice(0, 50)
+    })
   }, [])
 
   const markRead = useCallback((id: string) => {
@@ -62,11 +88,13 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
 
   const markAllRead = useCallback(() => {
     setNotifications(prev => prev.map(n => ({ ...n, read: true })))
+    markAllReadInDb()
   }, [])
 
   const clearAll = useCallback(() => {
     setNotifications([])
     localStorage.removeItem(STORAGE_KEY)
+    markAllReadInDb()
   }, [])
 
   const unreadCount = notifications.filter(n => !n.read).length

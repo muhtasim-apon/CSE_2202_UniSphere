@@ -1,38 +1,24 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { Plus, FileText, ChevronDown, ChevronUp, Info, Save } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { Plus, FileText, Info, Save, ChevronDown, ChevronUp } from 'lucide-react'
 import {
-  getExamsByCourse, createExam, upsertMark,
-  getExamMarks, getCourseStudents,
-  type Exam, type ExamMark, type CourseStudent,
+  getCourseGradebook, getMyAllMarks, createExam, upsertMark,
+  type GradebookExam, type GradebookStudent, type StudentMarksCourse, type StudentMarkEntry,
 } from '@/app/lib/classesApi'
 
 type Props = {
   token: string
   role: 'teacher' | 'student'
   userId: string
-  courseId: number
-  courseName: string
-  courseCode: string | null
-  creditHours: number
+  courseId?: number
+  courseName?: string
+  courseCode?: string | null
+  creditHours?: number
   onMarkSaved?: () => void
 }
 
 const EXAM_TYPES = ['Midterm', 'Final', 'Quiz', 'Assignment', 'Lab', 'Viva', 'Presentation', 'Other']
-
-const GRADE_LEGEND = [
-  ['A+', '≥80%', 'bg-emerald-100 text-emerald-700'],
-  ['A',  '≥75%', 'bg-emerald-100 text-emerald-700'],
-  ['A-', '≥70%', 'bg-green-100 text-green-700'],
-  ['B+', '≥65%', 'bg-blue-100 text-blue-700'],
-  ['B',  '≥60%', 'bg-blue-100 text-blue-700'],
-  ['B-', '≥55%', 'bg-blue-100 text-blue-700'],
-  ['C+', '≥50%', 'bg-amber-100 text-amber-700'],
-  ['C',  '≥45%', 'bg-amber-100 text-amber-700'],
-  ['D',  '≥40%', 'bg-orange-100 text-orange-700'],
-  ['F',  '<40%', 'bg-red-100 text-red-700'],
-]
 
 const EXAM_TYPE_COLORS: Record<string, string> = {
   Midterm:      'bg-blue-100 text-blue-700',
@@ -45,15 +31,30 @@ const EXAM_TYPE_COLORS: Record<string, string> = {
   Other:        'bg-gray-100 text-gray-700',
 }
 
+const GRADE_LEGEND = [
+  ['A+','≥80%','bg-emerald-100 text-emerald-700'],['A','≥75%','bg-emerald-100 text-emerald-700'],
+  ['A-','≥70%','bg-green-100 text-green-700'],['B+','≥65%','bg-blue-100 text-blue-700'],
+  ['B','≥60%','bg-blue-100 text-blue-700'],['B-','≥55%','bg-blue-100 text-blue-700'],
+  ['C+','≥50%','bg-amber-100 text-amber-700'],['C','≥45%','bg-amber-100 text-amber-700'],
+  ['D','≥40%','bg-orange-100 text-orange-700'],['F','<40%','bg-red-100 text-red-700'],
+]
+
+function GradeChip({ grade }: { grade?: string | null }) {
+  if (!grade) return null
+  const cls = grade.startsWith('A') ? 'bg-emerald-100 text-emerald-700'
+    : grade.startsWith('B') ? 'bg-blue-100 text-blue-700'
+    : grade.startsWith('C') ? 'bg-amber-100 text-amber-700'
+    : grade === 'D' ? 'bg-orange-100 text-orange-700'
+    : 'bg-red-100 text-red-700'
+  return <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${cls}`}>{grade}</span>
+}
+
 const inputClass = 'w-full rounded-xl border border-border bg-card px-4 py-2.5 text-sm focus:border-accent focus:ring-2 focus:ring-accent/20 focus:outline-none'
 const labelClass = 'mb-1 block text-sm font-medium text-text-primary'
 
+// ── Add Exam Modal ────────────────────────────────────────────────────────────
 function AddExamModal({ token, courseId, creditHoursDefault, onClose, onSuccess }: {
-  token: string
-  courseId: number
-  creditHoursDefault: number
-  onClose: () => void
-  onSuccess: () => void
+  token: string; courseId: number; creditHoursDefault: number; onClose: () => void; onSuccess: () => void
 }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -68,24 +69,16 @@ function AddExamModal({ token, courseId, creditHoursDefault, onClose, onSuccess 
   async function handleSave() {
     if (!examName.trim()) { setError('Exam name is required'); return }
     if (!totalMarks || Number(totalMarks) <= 0) { setError('Total marks must be > 0'); return }
-    setSaving(true)
-    setError('')
+    setSaving(true); setError('')
     try {
       await createExam(token, {
-        exam_name:        examName.trim(),
-        exam_type:        examType,
-        total_marks:      Number(totalMarks),
-        credit_hours:     Number(creditHours) || creditHoursDefault,
-        exam_date:        examDate || undefined,
-        semester:         semester || undefined,
-        description:      description || undefined,
-        manual_course_id: courseId,
+        exam_name: examName.trim(), exam_type: examType,
+        total_marks: Number(totalMarks), credit_hours: Number(creditHours) || creditHoursDefault,
+        exam_date: examDate || undefined, semester: semester || undefined,
+        description: description || undefined, manual_course_id: courseId,
       })
-      onSuccess()
-      onClose()
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to create exam')
-    }
+      onSuccess(); onClose()
+    } catch (e: unknown) { setError(e instanceof Error ? e.message : 'Failed') }
     setSaving(false)
   }
 
@@ -95,354 +88,327 @@ function AddExamModal({ token, courseId, creditHoursDefault, onClose, onSuccess 
         <h2 className="font-display text-lg font-bold text-text-primary mb-4">Add Exam</h2>
         {error && <p className="mb-3 rounded-xl bg-red-50 px-4 py-2 text-sm text-red-600">{error}</p>}
         <div className="space-y-3">
-          <div>
-            <label className={labelClass}>Exam Name *</label>
-            <input className={inputClass} value={examName} onChange={e => setExamName(e.target.value)} placeholder="Midterm 2026" />
-          </div>
+          <div><label className={labelClass}>Exam Name *</label><input className={inputClass} value={examName} onChange={e => setExamName(e.target.value)} placeholder="Midterm 2026" /></div>
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={labelClass}>Exam Type</label>
+            <div><label className={labelClass}>Type</label>
               <select className={inputClass} value={examType} onChange={e => setExamType(e.target.value)}>
-                {EXAM_TYPES.map(t => <option key={t}>{t}</option>)}
+                {EXAM_TYPES.map(t=><option key={t}>{t}</option>)}
               </select>
             </div>
-            <div>
-              <label className={labelClass}>Total Marks *</label>
-              <input type="number" min="0.01" step="0.5" className={inputClass} value={totalMarks} onChange={e => setTotalMarks(e.target.value)} />
-            </div>
+            <div><label className={labelClass}>Total Marks *</label><input type="number" min="0.01" step="0.5" className={inputClass} value={totalMarks} onChange={e => setTotalMarks(e.target.value)} /></div>
           </div>
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className={labelClass}>Credit Hours</label>
-              <input type="number" min="0.5" step="0.5" max="6" className={inputClass} value={creditHours} onChange={e => setCreditHours(e.target.value)} />
-            </div>
-            <div>
-              <label className={labelClass}>Exam Date</label>
-              <input type="date" className={inputClass} value={examDate} onChange={e => setExamDate(e.target.value)} />
-            </div>
+            <div><label className={labelClass}>Credit Hours</label><input type="number" min="0.5" step="0.5" max="6" className={inputClass} value={creditHours} onChange={e => setCreditHours(e.target.value)} /></div>
+            <div><label className={labelClass}>Exam Date</label><input type="date" className={inputClass} value={examDate} onChange={e => setExamDate(e.target.value)} /></div>
           </div>
-          <div>
-            <label className={labelClass}>Semester</label>
-            <input className={inputClass} value={semester} onChange={e => setSemester(e.target.value)} placeholder="Spring 2026" />
-          </div>
-          <div>
-            <label className={labelClass}>Description</label>
-            <textarea className={inputClass} rows={2} value={description} onChange={e => setDescription(e.target.value)} />
-          </div>
+          <div><label className={labelClass}>Semester</label><input className={inputClass} value={semester} onChange={e => setSemester(e.target.value)} placeholder="Spring 2026" /></div>
+          <div><label className={labelClass}>Description</label><textarea className={inputClass} rows={2} value={description} onChange={e => setDescription(e.target.value)} /></div>
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-xl border border-border px-4 py-2 text-sm font-semibold text-muted hover:border-primary hover:text-primary transition">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-60">
-            {saving ? 'Saving…' : 'Save Exam'}
-          </button>
+          <button onClick={handleSave} disabled={saving} className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-60">{saving ? 'Saving…' : 'Save'}</button>
         </div>
       </div>
     </div>
   )
 }
 
-function EnterMarksModal({ token, exam, onClose, onSuccess, onMarkSaved }: {
-  token: string
-  exam: Exam
-  onClose: () => void
-  onSuccess: () => void
-  onMarkSaved?: () => void
+// ── Teacher grade book view ───────────────────────────────────────────────────
+function TeacherView({ token, courseId, creditHours = 3, onMarkSaved }: {
+  token: string; courseId: number; courseName: string; courseCode: string | null; creditHours: number; onMarkSaved?: () => void
 }) {
-  const [marks, setMarks] = useState<Record<number, { marks: string; saved: boolean; saving: boolean; grade?: string }>>({})
-  const [students, setStudents] = useState<CourseStudent[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    async function load() {
-      try {
-        let studentList: CourseStudent[] = []
-        if (exam.manual_course_id) {
-          const res = await getCourseStudents(token, exam.manual_course_id)
-          studentList = res.students || []
-        }
-        const marksRes = await getExamMarks(token, exam.exam_id)
-        const existingMarks = (marksRes.marks || []) as ExamMark[]
-        const marksMap = Object.fromEntries(existingMarks.map(m => [m.student_id, m]))
-        setStudents(studentList)
-        const init: typeof marks = {}
-        for (const s of studentList) {
-          const existing = marksMap[s.student_id]
-          init[s.student_id] = {
-            marks: existing ? String(existing.marks_obtained) : '',
-            saved: !!existing,
-            saving: false,
-            grade: existing?.grade ?? undefined,
-          }
-        }
-        setMarks(init)
-      } catch {
-        setError('Failed to load students.')
-      } finally {
-        setLoading(false)
-      }
-    }
-    load()
-  }, [exam.exam_id, exam.manual_course_id])
-
-  async function saveMark(studentId: number) {
-    const entry = marks[studentId]
-    if (!entry) return
-    const v = parseFloat(entry.marks)
-    if (isNaN(v) || v < 0) return
-    setMarks(prev => ({ ...prev, [studentId]: { ...prev[studentId], saving: true } }))
-    try {
-      const saved = await upsertMark(token, exam.exam_id, studentId, v)
-      setMarks(prev => ({
-        ...prev,
-        [studentId]: { ...prev[studentId], saved: true, saving: false, grade: saved.grade ?? undefined },
-      }))
-      onMarkSaved?.()
-    } catch {
-      setMarks(prev => ({ ...prev, [studentId]: { ...prev[studentId], saving: false } }))
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-black/40">
-      <div className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-card p-6 shadow-xl">
-        <h2 className="font-display text-base font-bold text-text-primary mb-1">Enter Marks</h2>
-        <p className="text-xs text-muted mb-4">{exam.exam_name} · Total: {exam.total_marks}</p>
-
-        {loading ? (
-          <div className="space-y-2">{[1,2,3].map(i=><div key={i} className="h-12 animate-pulse rounded-xl bg-border"/>)}</div>
-        ) : error ? (
-          <p className="text-sm text-red-500 text-center py-4">{error}</p>
-        ) : students.length === 0 ? (
-          <p className="text-sm text-muted text-center py-6">
-            {exam.manual_course_id
-              ? 'No students enrolled in this course yet.'
-              : 'This exam is not linked to a course.'}
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {students.map(s => {
-              const sid = s.student_id
-              const entry = marks[sid] || { marks: '', saved: false, saving: false }
-              return (
-                <div key={sid} className="flex items-center gap-3 rounded-xl border border-border bg-background px-3 py-2.5">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-text-primary truncate">{s.first_name} {s.last_name}</p>
-                    <p className="text-xs text-muted">{s.student_roll}</p>
-                  </div>
-                  {entry.grade && (
-                    <span className="text-xs font-semibold text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">{entry.grade}</span>
-                  )}
-                  <input
-                    type="number"
-                    min="0"
-                    max={exam.total_marks}
-                    step="0.5"
-                    value={entry.marks}
-                    onChange={e => setMarks(prev => ({ ...prev, [sid]: { ...prev[sid], marks: e.target.value, saved: false } }))}
-                    className="w-20 rounded-lg border border-border bg-card px-2.5 py-1.5 text-sm text-center focus:border-accent focus:outline-none"
-                    placeholder="—"
-                  />
-                  <span className="text-xs text-muted">/ {exam.total_marks}</span>
-                  <button
-                    onClick={() => saveMark(sid)}
-                    disabled={entry.saving || entry.saved}
-                    className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
-                      entry.saved ? 'bg-emerald-100 text-emerald-700' : 'bg-primary text-white hover:opacity-90'
-                    } disabled:opacity-60`}
-                  >
-                    <Save className="h-3 w-3" />
-                    {entry.saving ? '…' : entry.saved ? 'Saved' : 'Save'}
-                  </button>
-                </div>
-              )
-            })}
-          </div>
-        )}
-
-        <div className="mt-5 flex justify-end">
-          <button onClick={() => { onSuccess(); onClose() }} className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-white hover:opacity-90 transition">Done</button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function GradeChip({ grade }: { grade?: string | null }) {
-  if (!grade) return null
-  const style = grade.startsWith('A') ? 'bg-emerald-100 text-emerald-700'
-    : grade.startsWith('B') ? 'bg-blue-100 text-blue-700'
-    : grade.startsWith('C') ? 'bg-amber-100 text-amber-700'
-    : grade === 'D' ? 'bg-orange-100 text-orange-700'
-    : grade === 'F' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-700'
-  return <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${style}`}>{grade}</span>
-}
-
-function ExamCard({ exam, token, role, onRefresh, onMarkSaved }: {
-  exam: Exam
-  token: string
-  role: string
-  onRefresh: () => void
-  onMarkSaved?: () => void
-}) {
-  const [expanded, setExpanded] = useState(false)
-  const [showMarksModal, setShowMarksModal] = useState(false)
-  const mark = exam.my_mark
-
-  return (
-    <div className="rounded-xl border border-border overflow-hidden">
-      <div className="p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${EXAM_TYPE_COLORS[exam.exam_type] || 'bg-gray-100 text-gray-700'}`}>
-                {exam.exam_type}
-              </span>
-              {role === 'student' && <GradeChip grade={mark?.grade} />}
-            </div>
-            <h3 className="font-semibold text-sm text-text-primary mt-1.5">{exam.exam_name}</h3>
-            <div className="flex flex-wrap gap-3 mt-1 text-xs text-muted">
-              <span>Total: {exam.total_marks} marks</span>
-              <span>Credit: {exam.credit_hours}</span>
-              {role === 'student' && mark && (
-                <>
-                  <span className="font-medium text-text-primary">Score: {mark.marks_obtained}/{exam.total_marks}</span>
-                  {mark.grade_points != null && <span>GP: {mark.grade_points}</span>}
-                </>
-              )}
-              {exam.exam_date && <span>{new Date(exam.exam_date).toLocaleDateString()}</span>}
-            </div>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {role === 'teacher' && (
-              <button
-                onClick={() => setShowMarksModal(true)}
-                className="flex items-center gap-1 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 transition"
-              >
-                <Save className="h-3 w-3" /> Enter Marks
-              </button>
-            )}
-            <button onClick={() => setExpanded(x => !x)} className="text-muted hover:text-primary">
-              {expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-            </button>
-          </div>
-        </div>
-
-        {expanded && (
-          <div className="mt-3 pt-3 border-t border-border">
-            {role === 'student' && !mark && (
-              <p className="text-xs text-muted italic">Your teacher hasn't entered marks for this exam yet.</p>
-            )}
-            {exam.exam_date && <p className="text-xs text-muted">Date: {new Date(exam.exam_date).toLocaleDateString()}</p>}
-            {exam.semester && <p className="text-xs text-muted">Semester: {exam.semester}</p>}
-            {!!(exam as unknown as Record<string, unknown>).description && (
-              <p className="text-xs text-muted mt-1">{(exam as unknown as Record<string, unknown>).description as string}</p>
-            )}
-          </div>
-        )}
-      </div>
-
-      {showMarksModal && (
-        <EnterMarksModal
-          token={token}
-          exam={exam}
-          onClose={() => setShowMarksModal(false)}
-          onSuccess={onRefresh}
-          onMarkSaved={onMarkSaved}
-        />
-      )}
-    </div>
-  )
-}
-
-export default function ExamMarksTab({ token, role, courseId, courseName, courseCode, creditHours, onMarkSaved }: Props) {
-  const [exams, setExams] = useState<Exam[]>([])
+  const [exams, setExams] = useState<GradebookExam[]>([])
+  const [students, setStudents] = useState<GradebookStudent[]>([])
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
   const [showLegend, setShowLegend] = useState(false)
+  const [expandedExam, setExpandedExam] = useState<number | null>(null)
+  const [markInputs, setMarkInputs] = useState<Record<string, { val: string; saving: boolean; saved: boolean }>>({})
 
-  const load = async () => {
+  const load = useCallback(() => {
     setLoading(true)
+    getCourseGradebook(token, courseId)
+      .then(res => {
+        setExams(res.exams || [])
+        setStudents(res.students || [])
+        const init: typeof markInputs = {}
+        for (const stu of (res.students || [])) {
+          for (const [eid, m] of Object.entries(stu.marks)) {
+            init[`${eid}-${stu.student_id}`] = { val: String(m.marks_obtained), saving: false, saved: true }
+          }
+        }
+        setMarkInputs(init)
+        if ((res.exams || []).length > 0) setExpandedExam((res.exams || [])[0].exam_id)
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [token, courseId])
+
+  useEffect(() => { load() }, [load])
+
+  async function saveMark(examId: number, studentId: number) {
+    const k = `${examId}-${studentId}`
+    const v = parseFloat(markInputs[k]?.val || '')
+    if (isNaN(v) || v < 0) return
+    setMarkInputs(prev => ({ ...prev, [k]: { ...prev[k], saving: true, saved: false } }))
     try {
-      const res = await getExamsByCourse(token, courseId)
-      setExams(res.exams || [])
-    } catch {}
-    setLoading(false)
+      await upsertMark(token, examId, studentId, v)
+      setMarkInputs(prev => ({ ...prev, [k]: { val: String(v), saving: false, saved: true } }))
+      onMarkSaved?.()
+      load()
+    } catch {
+      setMarkInputs(prev => ({ ...prev, [k]: { ...prev[k], saving: false } }))
+    }
   }
 
-  useEffect(() => { load() }, [courseId])
+  const grouped: Record<string, GradebookExam[]> = {}
+  for (const e of exams) {
+    ;(grouped[e.exam_type] = grouped[e.exam_type] || []).push(e)
+  }
 
   return (
-    <div className="rounded-card border border-border bg-card p-5 shadow-[var(--shadow-card)]">
-      <div className="mb-4">
-        <h2 className="text-base font-semibold text-text-primary">Exam Marks</h2>
-        <p className="text-xs text-muted mt-0.5">{courseName}{courseCode ? ` · ${courseCode}` : ''}</p>
-      </div>
-
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex gap-2">
-          <button
-            onClick={() => setShowLegend(x => !x)}
-            className="flex items-center gap-1.5 rounded-xl border border-border px-3 py-1.5 text-xs font-semibold text-muted hover:border-primary hover:text-primary transition"
-          >
-            <Info className="h-3.5 w-3.5" /> Grade Scale
-          </button>
-        </div>
-        {role === 'teacher' && (
-          <button
-            onClick={() => setShowAdd(true)}
-            className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 transition"
-          >
-            <Plus className="h-3.5 w-3.5" /> Add Exam
-          </button>
-        )}
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <button onClick={() => setShowLegend(x => !x)} className="flex items-center gap-1.5 rounded-xl border border-border px-3 py-1.5 text-xs font-semibold text-muted hover:border-primary hover:text-primary transition">
+          <Info className="h-3.5 w-3.5" /> Grade Scale
+        </button>
+        <button onClick={() => setShowAdd(true)} className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 transition">
+          <Plus className="h-3.5 w-3.5" /> Add Exam
+        </button>
       </div>
 
       {showLegend && (
-        <div className="mb-4 rounded-xl border border-border bg-background p-3">
-          <h3 className="text-xs font-semibold text-muted mb-2 uppercase tracking-wide">DU Grade Scale</h3>
+        <div className="rounded-xl border border-border bg-background p-3">
+          <p className="text-xs font-semibold text-muted mb-2 uppercase tracking-wide">DU Grade Scale</p>
           <div className="flex flex-wrap gap-1.5">
-            {GRADE_LEGEND.map(([g, pct, cls]) => (
-              <span key={g} className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${cls}`}>{g} {pct}</span>
-            ))}
+            {GRADE_LEGEND.map(([g,pct,cls]) => <span key={g} className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${cls}`}>{g} {pct}</span>)}
           </div>
         </div>
       )}
 
       {loading ? (
-        <div className="space-y-3">
-          {[1, 2, 3].map(i => <div key={i} className="h-20 animate-pulse bg-border rounded-xl" />)}
-        </div>
+        <div className="space-y-3">{[1,2,3].map(i=><div key={i} className="h-20 animate-pulse bg-border rounded-xl"/>)}</div>
       ) : exams.length === 0 ? (
         <div className="text-center py-10">
           <FileText className="h-10 w-10 text-border mx-auto mb-3" />
-          <p className="text-sm text-muted">
-            {role === 'teacher' ? 'No exams yet. Add your first exam.' : 'No exams published yet.'}
-          </p>
+          <p className="text-sm text-muted">No exams yet. Add your first exam above.</p>
         </div>
       ) : (
-        <div className="space-y-3">
-          {exams.map(exam => (
-            <ExamCard
-              key={exam.exam_id}
-              exam={exam}
-              token={token}
-              role={role}
-              onRefresh={load}
-              onMarkSaved={onMarkSaved}
-            />
-          ))}
-        </div>
+        Object.entries(grouped).map(([type, typeExams]) => (
+          <div key={type} className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${EXAM_TYPE_COLORS[type] || 'bg-gray-100 text-gray-700'}`}>{type}</span>
+              <div className="flex-1 h-px bg-border" />
+            </div>
+
+            {typeExams.map(exam => {
+              const open = expandedExam === exam.exam_id
+              const marked = students.filter(s => s.marks[exam.exam_id]).length
+              return (
+                <div key={exam.exam_id} className="rounded-xl border border-border overflow-hidden">
+                  <button
+                    onClick={() => setExpandedExam(open ? null : exam.exam_id)}
+                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-accent/5 transition text-left"
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-text-primary">{exam.exam_name}</p>
+                      <p className="text-xs text-muted mt-0.5">
+                        Total: {exam.total_marks} marks · Credit: {exam.credit_hours}
+                        {exam.exam_date && ` · ${new Date(exam.exam_date).toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'numeric'})}`}
+                        {' · '}<span className="text-primary font-medium">{marked}/{students.length} marked</span>
+                      </p>
+                    </div>
+                    {open ? <ChevronUp className="h-4 w-4 text-muted flex-shrink-0" /> : <ChevronDown className="h-4 w-4 text-muted flex-shrink-0" />}
+                  </button>
+
+                  {open && (
+                    <div className="border-t border-border bg-background">
+                      {students.length === 0 ? (
+                        <p className="text-sm text-muted text-center py-6">No enrolled students.</p>
+                      ) : (
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-border">
+                              <th className="text-left px-4 py-2 text-xs font-semibold text-muted">Student</th>
+                              <th className="text-left px-4 py-2 text-xs font-semibold text-muted">Roll</th>
+                              <th className="text-center px-4 py-2 text-xs font-semibold text-muted">Grade</th>
+                              <th className="text-center px-4 py-2 text-xs font-semibold text-muted">Marks / {exam.total_marks}</th>
+                              <th className="px-4 py-2" />
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {students.map(stu => {
+                              const k = `${exam.exam_id}-${stu.student_id}`
+                              const existing = stu.marks[exam.exam_id]
+                              const inp = markInputs[k] || { val: '', saving: false, saved: false }
+                              return (
+                                <tr key={stu.student_id} className="border-b border-border/50 last:border-0 hover:bg-accent/5">
+                                  <td className="px-4 py-2.5 font-medium text-text-primary whitespace-nowrap">{stu.first_name} {stu.last_name}</td>
+                                  <td className="px-4 py-2.5 text-xs text-muted">{stu.student_roll}</td>
+                                  <td className="px-4 py-2.5 text-center">
+                                    <GradeChip grade={existing?.grade} />
+                                  </td>
+                                  <td className="px-4 py-2.5 text-center">
+                                    <input
+                                      type="number" min="0" max={exam.total_marks} step="0.5"
+                                      value={inp.val}
+                                      onChange={e => setMarkInputs(prev => ({ ...prev, [k]: { val: e.target.value, saving: false, saved: false } }))}
+                                      className="w-20 rounded-lg border border-border bg-card px-2 py-1 text-sm text-center focus:border-accent focus:outline-none"
+                                      placeholder="—"
+                                    />
+                                  </td>
+                                  <td className="px-4 py-2.5">
+                                    <button
+                                      onClick={() => saveMark(exam.exam_id, stu.student_id)}
+                                      disabled={inp.saving || inp.saved || !inp.val}
+                                      className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition whitespace-nowrap ${
+                                        inp.saved ? 'bg-emerald-100 text-emerald-700' : 'bg-primary text-white hover:opacity-90'
+                                      } disabled:opacity-50`}
+                                    >
+                                      <Save className="h-3 w-3" />
+                                      {inp.saving ? '…' : inp.saved ? 'Saved' : 'Save'}
+                                    </button>
+                                  </td>
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        ))
       )}
 
       {showAdd && (
-        <AddExamModal
+        <AddExamModal token={token} courseId={courseId} creditHoursDefault={creditHours} onClose={() => setShowAdd(false)} onSuccess={load} />
+      )}
+    </div>
+  )
+}
+
+// ── Student all-courses marks view ────────────────────────────────────────────
+function StudentView({ token }: { token: string }) {
+  const [courses, setCourses] = useState<StudentMarksCourse[]>([])
+  const [loading, setLoading] = useState(true)
+  const [expandedCourse, setExpandedCourse] = useState<number | null>(null)
+
+  useEffect(() => {
+    getMyAllMarks(token)
+      .then(res => {
+        const data = res.courses || []
+        setCourses(data)
+        if (data.length > 0) setExpandedCourse(data[0].course_id)
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }, [token])
+
+  if (loading) return (
+    <div className="space-y-3">{[1,2,3].map(i=><div key={i} className="h-20 animate-pulse rounded-xl bg-border"/>)}</div>
+  )
+
+  if (courses.length === 0) return (
+    <div className="text-center py-16">
+      <FileText className="h-10 w-10 text-border mx-auto mb-3" />
+      <p className="text-sm text-muted">No marks available yet.</p>
+    </div>
+  )
+
+  return (
+    <div className="space-y-3">
+      {courses.map(c => {
+        const open = expandedCourse === c.course_id
+        const totalExams = Object.values(c.by_type).reduce((a, v) => a + v.length, 0)
+        const types = Object.keys(c.by_type)
+
+        return (
+          <div key={c.course_id} className="rounded-xl border border-border overflow-hidden">
+            <button
+              onClick={() => setExpandedCourse(open ? null : c.course_id)}
+              className="w-full text-left px-4 py-3 hover:bg-accent/5 transition bg-card"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="font-semibold text-sm text-text-primary">{c.course_name}</p>
+                    {c.course_code && <span className="text-xs rounded-full bg-primary/10 text-primary px-2 py-0.5 font-medium">{c.course_code}</span>}
+                  </div>
+                  <div className="flex gap-2 mt-1 flex-wrap">
+                    {c.semester && <span className="text-xs text-muted">{c.semester}</span>}
+                    {totalExams > 0 && <span className="text-xs text-muted">{totalExams} exam{totalExams !== 1 ? 's' : ''}</span>}
+                    {types.map(t => <span key={t} className={`text-xs rounded-full px-2 py-0.5 font-medium ${EXAM_TYPE_COLORS[t] || 'bg-gray-100 text-gray-700'}`}>{t}</span>)}
+                  </div>
+                </div>
+                {open ? <ChevronUp className="h-4 w-4 text-muted flex-shrink-0" /> : <ChevronDown className="h-4 w-4 text-muted flex-shrink-0" />}
+              </div>
+            </button>
+
+            {open && (
+              <div className="border-t border-border bg-background divide-y divide-border">
+                {totalExams === 0 ? (
+                  <p className="text-sm text-muted text-center py-6">No marks recorded yet.</p>
+                ) : (
+                  Object.entries(c.by_type).map(([type, marks]) => (
+                    <div key={type} className="px-4 py-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${EXAM_TYPE_COLORS[type] || 'bg-gray-100 text-gray-700'}`}>{type}</span>
+                      </div>
+                      <div className="space-y-1.5">
+                        {(marks as StudentMarkEntry[]).map((m, idx) => (
+                          <div key={m.exam_id ?? idx} className="flex items-center gap-3 rounded-lg bg-card px-3 py-2.5">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-text-primary">{m.exam_name}</p>
+                              {m.exam_date && <p className="text-xs text-muted">{new Date(m.exam_date).toLocaleDateString('en-GB', {day:'2-digit',month:'short',year:'numeric'})}</p>}
+                            </div>
+                            <div className="flex items-center gap-2 text-sm flex-shrink-0">
+                              <span className="font-semibold text-text-primary">{m.marks_obtained}/{m.total_marks}</span>
+                              <GradeChip grade={m.grade} />
+                              {m.grade_points != null && (
+                                <span className="text-xs text-muted">GP {m.grade_points.toFixed(2)}</span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Main export ───────────────────────────────────────────────────────────────
+export default function ExamMarksTab({ token, role, userId: _userId, courseId, courseName, courseCode, creditHours = 3, onMarkSaved }: Props) {
+  return (
+    <div className="rounded-card border border-border bg-card p-5 shadow-[var(--shadow-card)]">
+      <div className="mb-4">
+        <h2 className="text-base font-semibold text-text-primary">Exam Marks</h2>
+        {courseName
+          ? <p className="text-xs text-muted mt-0.5">{courseName}{courseCode ? ` · ${courseCode}` : ''}</p>
+          : <p className="text-xs text-muted mt-0.5">All enrolled courses</p>
+        }
+      </div>
+      {role === 'teacher' && courseId != null ? (
+        <TeacherView
           token={token}
           courseId={courseId}
-          creditHoursDefault={creditHours}
-          onClose={() => setShowAdd(false)}
-          onSuccess={load}
+          courseName={courseName || ''}
+          courseCode={courseCode ?? null}
+          creditHours={creditHours}
+          onMarkSaved={onMarkSaved}
         />
+      ) : (
+        <StudentView token={token} />
       )}
     </div>
   )

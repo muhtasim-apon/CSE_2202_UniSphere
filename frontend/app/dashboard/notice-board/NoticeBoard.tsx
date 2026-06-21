@@ -90,18 +90,12 @@ export default function NoticeBoard() {
           // Respect audience rules: teachers skip student-only posts, students skip teacher-only posts
           if (post.audience === 'students' && userRole === 'teacher') return
           if (post.audience === 'teachers' && userRole !== 'teacher') return
-          addNotification({
-            type: 'notice',
-            title: 'New notice posted',
-            body: post.title,
-            href: '/dashboard/notice-board',
-          })
           setRefreshKey(k => k + 1)
         }
       )
       .subscribe()
     return () => { supabase.removeChannel(channel) }
-  }, [token, userId, userRole, addNotification])
+  }, [token, userId, userRole])
 
   function handleCategoryChange(cat: string) {
     setActiveCategory(cat)

@@ -214,28 +214,36 @@ export default function ClassesClient({ userId, role }: Props) {
             />
           )}
           {activeTab === 'attendance' && (
-            selectedCourse ? (
-              <AttendanceTab
-                token={token}
-                role={role}
-                courseId={selectedCourse.manual_course_id}
-                courseName={selectedCourse.course_name}
-              />
-            ) : <EmptyCourseState />
+            role === 'teacher' ? (
+              selectedCourse ? (
+                <AttendanceTab
+                  token={token}
+                  role="teacher"
+                  courseId={selectedCourse.manual_course_id}
+                  courseName={selectedCourse.course_name}
+                />
+              ) : <EmptyCourseState />
+            ) : (
+              <AttendanceTab token={token} role="student" />
+            )
           )}
           {activeTab === 'exams' && (
-            selectedCourse ? (
-              <ExamMarksTab
-                token={token}
-                role={role}
-                userId={userId}
-                courseId={selectedCourse.manual_course_id}
-                courseName={selectedCourse.course_name}
-                courseCode={selectedCourse.course_code}
-                creditHours={selectedCourse.credit_hours}
-                onMarkSaved={() => setCgpaKey(k => k + 1)}
-              />
-            ) : <EmptyCourseState />
+            role === 'teacher' ? (
+              selectedCourse ? (
+                <ExamMarksTab
+                  token={token}
+                  role="teacher"
+                  userId={userId}
+                  courseId={selectedCourse.manual_course_id}
+                  courseName={selectedCourse.course_name}
+                  courseCode={selectedCourse.course_code}
+                  creditHours={selectedCourse.credit_hours}
+                  onMarkSaved={() => setCgpaKey(k => k + 1)}
+                />
+              ) : <EmptyCourseState />
+            ) : (
+              <ExamMarksTab token={token} role="student" userId={userId} />
+            )
           )}
           {activeTab === 'cgpa' && (
             <CGPAView token={token} role={role} refreshKey={cgpaKey} />

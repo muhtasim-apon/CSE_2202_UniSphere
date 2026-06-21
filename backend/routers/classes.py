@@ -5,6 +5,8 @@ import uuid as _uuid
 from datetime import datetime, timezone
 from typing import Optional
 
+import jwt as pyjwt
+from jwt import PyJWKClient as _PyJWKClient
 from dotenv import load_dotenv
 from fastapi import APIRouter, File, Form, HTTPException, Header, Query, Request, UploadFile
 from pydantic import BaseModel, Field
@@ -19,6 +21,15 @@ _supabase = create_client(
     os.environ["SUPABASE_SERVICE_ROLE_KEY"],
 )
 
+_jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "")
+_jwks_inst: Optional[_PyJWKClient] = None
+
+def _get_jwks_inst() -> _PyJWKClient:
+    global _jwks_inst
+    if _jwks_inst is None:
+        _jwks_inst = _PyJWKClient(f"{os.environ['SUPABASE_URL']}/auth/v1/.well-known/jwks.json")
+    return _jwks_inst
+
 router = APIRouter(prefix="/api/classes", tags=["classes"])
 
 
@@ -27,10 +38,27 @@ router = APIRouter(prefix="/api/classes", tags=["classes"])
 async def _auth(authorization: Optional[str]) -> object:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing token")
-    res = _supabase.auth.get_user(authorization.split(" ", 1)[1])
-    if not res.user:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    return res.user
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        header = pyjwt.get_unverified_header(token)
+        alg = header.get("alg", "HS256")
+        if alg.startswith("HS"):
+            payload = pyjwt.decode(token, _jwt_secret, algorithms=[alg], options={"verify_aud": False})
+        else:
+            sk = _get_jwks_inst().get_signing_key_from_jwt(token)
+            payload = pyjwt.decode(token, sk.key, algorithms=[alg], options={"verify_aud": False})
+        uid = payload.get("sub", "")
+        if not uid:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        class _U:
+            def __init__(self, i): self.id = i
+        return _U(uid)
+    except HTTPException:
+        raise
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail=f"Auth error: {exc}")
 
 
 def _get_profile(user_id: str) -> dict:
@@ -390,6 +418,197 @@ async def course_attendance(manual_course_id: int, authorization: Optional[str] 
 
     sessions = _supabase.table("attendance_session").select("*").eq("manual_course_id", manual_course_id).order("session_date", desc=True).execute()
     return {"sessions": sessions.data or []}
+
+
+@router.get("/attendance/course/{manual_course_id}/full")
+async def course_attendance_full(manual_course_id: int, authorization: Optional[str] = Header(default=None)):
+    user = await _auth(authorization)
+    profile = _get_profile(user.id)
+    instructor_id = _require_teacher(profile)
+
+    course = _supabase.table("manual_course").select("instructor_id").eq("manual_course_id", manual_course_id).single().execute()
+    if not course.data or course.data["instructor_id"] != instructor_id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    sessions = _supabase.table("attendance_session").select("*").eq("manual_course_id", manual_course_id).order("session_date", desc=True).execute().data or []
+    for s in sessions:
+        recs = _supabase.table("attendance_record").select("*, student:student(first_name,last_name,student_roll)").eq("session_id", s["session_id"]).execute().data or []
+        s["records"] = recs
+        s["summary"] = {
+            "present":  sum(1 for r in recs if r["status"] == "Present"),
+            "absent":   sum(1 for r in recs if r["status"] == "Absent"),
+            "late":     sum(1 for r in recs if r["status"] == "Late"),
+            "excused":  sum(1 for r in recs if r["status"] == "Excused"),
+            "total":    len(recs),
+        }
+    return {"sessions": sessions}
+
+
+@router.get("/attendance/my-detail")
+async def my_attendance_detail(authorization: Optional[str] = Header(default=None)):
+    user = await _auth(authorization)
+    profile = _get_profile(user.id)
+    student_id = _require_student(profile)
+
+    enrollments = _supabase.table("manual_enrollment").select(
+        "manual_course_id, course:manual_course(course_name,course_code,semester)"
+    ).eq("student_id", student_id).eq("is_active", True).execute().data or []
+
+    if not enrollments:
+        return {"courses": []}
+
+    course_ids = [e["manual_course_id"] for e in enrollments]
+
+    # Fetch all sessions for all enrolled courses in one query
+    all_sessions = _supabase.table("attendance_session").select("*").in_(
+        "manual_course_id", course_ids
+    ).order("session_date", desc=False).execute().data or []
+
+    # Fetch all attendance records for this student in one query
+    session_ids = [s["session_id"] for s in all_sessions]
+    records_by_session: dict = {}
+    if session_ids:
+        all_records = _supabase.table("attendance_record").select("session_id,status,remarks").in_(
+            "session_id", session_ids
+        ).eq("student_id", student_id).execute().data or []
+        for r in all_records:
+            records_by_session[r["session_id"]] = r
+
+    # Group sessions by course
+    sessions_by_course: dict = {}
+    for s in all_sessions:
+        sessions_by_course.setdefault(s["manual_course_id"], []).append(s)
+
+    result = []
+    for enr in enrollments:
+        course = enr.get("course") or {}
+        cid = enr["manual_course_id"]
+        sessions = sessions_by_course.get(cid, [])
+
+        present = absent = late = excused = 0
+        session_detail = []
+        for s in sessions:
+            rec = records_by_session.get(s["session_id"])
+            status = rec["status"] if rec else None
+            if status == "Present":   present += 1
+            elif status == "Absent":  absent += 1
+            elif status == "Late":    late += 1
+            elif status == "Excused": excused += 1
+            session_detail.append({
+                "session_id":    s["session_id"],
+                "session_date":  s["session_date"],
+                "session_title": s.get("session_title"),
+                "topic":         s.get("topic"),
+                "status":        status,
+                "remarks":       rec["remarks"] if rec else None,
+            })
+
+        total = present + absent + late + excused
+        pct = round(((present + late) / total) * 100, 1) if total else 0.0
+        result.append({
+            "course_id":      cid,
+            "course_name":    course.get("course_name", f"Course {cid}"),
+            "course_code":    course.get("course_code"),
+            "semester":       course.get("semester"),
+            "total_sessions": total,
+            "present":  present,
+            "absent":   absent,
+            "late":     late,
+            "excused":  excused,
+            "attendance_pct": pct,
+            "sessions": session_detail,
+        })
+    return {"courses": result}
+
+
+@router.get("/exams/course/{manual_course_id}/gradebook")
+async def course_gradebook(manual_course_id: int, authorization: Optional[str] = Header(default=None)):
+    user = await _auth(authorization)
+    profile = _get_profile(user.id)
+    instructor_id = _require_teacher(profile)
+
+    course = _supabase.table("manual_course").select("instructor_id").eq("manual_course_id", manual_course_id).single().execute()
+    if not course.data or course.data["instructor_id"] != instructor_id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+    exams = _supabase.table("exam").select("exam_id,exam_name,exam_type,total_marks,credit_hours,exam_date").eq("manual_course_id", manual_course_id).order("created_at").execute().data or []
+    enrollments = _supabase.table("manual_enrollment").select("student_id,student:student(first_name,last_name,student_roll)").eq("manual_course_id", manual_course_id).eq("is_active", True).execute().data or []
+
+    if not exams or not enrollments:
+        return {"exams": exams, "students": []}
+
+    exam_ids = [e["exam_id"] for e in exams]
+    student_ids = [e["student_id"] for e in enrollments]
+    marks_res = _supabase.table("exam_mark").select("*").in_("exam_id", exam_ids).in_("student_id", student_ids).execute().data or []
+
+    marks_map: dict = {}
+    for m in marks_res:
+        marks_map.setdefault(m["student_id"], {})[m["exam_id"]] = m
+
+    students_data = []
+    for enr in enrollments:
+        sid = enr["student_id"]
+        st = enr.get("student") or {}
+        students_data.append({
+            "student_id":   sid,
+            "first_name":   st.get("first_name", ""),
+            "last_name":    st.get("last_name", ""),
+            "student_roll": st.get("student_roll", ""),
+            "marks": marks_map.get(sid, {}),
+        })
+    students_data.sort(key=lambda s: s["student_roll"])
+    return {"exams": exams, "students": students_data}
+
+
+@router.get("/exams/my-marks")
+async def my_all_marks(authorization: Optional[str] = Header(default=None)):
+    user = await _auth(authorization)
+    profile = _get_profile(user.id)
+    student_id = _require_student(profile)
+
+    enrollments = _supabase.table("manual_enrollment").select(
+        "manual_course_id,course:manual_course(course_name,course_code,semester)"
+    ).eq("student_id", student_id).eq("is_active", True).execute().data or []
+
+    marks = _supabase.table("exam_mark").select(
+        "marks_obtained,grade,grade_points,remarks,exam:exam(exam_id,exam_name,exam_type,total_marks,credit_hours,exam_date,manual_course_id)"
+    ).eq("student_id", student_id).execute().data or []
+
+    by_course: dict = {}
+    for m in marks:
+        exam = m.get("exam") or {}
+        cid  = exam.get("manual_course_id")
+        if not cid: continue
+        etype = exam.get("exam_type", "Other")
+        entry = {
+            "exam_id":       exam.get("exam_id"),
+            "exam_name":     exam.get("exam_name"),
+            "exam_type":     etype,
+            "total_marks":   exam.get("total_marks"),
+            "credit_hours":  exam.get("credit_hours"),
+            "exam_date":     exam.get("exam_date"),
+            "marks_obtained":m.get("marks_obtained"),
+            "grade":         m.get("grade"),
+            "grade_points":  m.get("grade_points"),
+            "remarks":       m.get("remarks"),
+        }
+        by_course.setdefault(cid, {}).setdefault(etype, []).append(entry)
+
+    result = []
+    for enr in enrollments:
+        cid    = enr["manual_course_id"]
+        course = enr.get("course") or {}
+        by_type = by_course.get(cid, {})
+        for lst in by_type.values():
+            lst.sort(key=lambda x: x.get("exam_date") or "")
+        result.append({
+            "course_id":   cid,
+            "course_name": course.get("course_name", f"Course {cid}"),
+            "course_code": course.get("course_code"),
+            "semester":    course.get("semester"),
+            "by_type":     by_type,
+        })
+    return {"courses": result}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -1,7 +1,10 @@
 import os
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from typing import Literal, Optional
 
+import jwt as pyjwt
+from jwt import PyJWKClient
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Header, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +19,21 @@ from routers.classes import router as classes_router, profile_router  # noqa: E4
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
+SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
+
+@dataclass
+class SimpleUser:
+    id: str
+
+# JWKS client is created once and caches the public keys in memory.
+# Used when Supabase project uses RS256 / ES256 (asymmetric keys).
+_jwks_client: Optional[PyJWKClient] = None
+
+def _get_jwks_client() -> PyJWKClient:
+    global _jwks_client
+    if _jwks_client is None:
+        _jwks_client = PyJWKClient(f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json")
+    return _jwks_client
 # Google OAuth — set in .env
 # GOOGLE_CLIENT_ID=
 # GOOGLE_CLIENT_SECRET=
@@ -316,14 +334,74 @@ class VoteRequest(BaseModel):
     option_id: str
 
 
-async def get_current_user(authorization: Optional[str] = Header(default=None)):
+async def get_current_user(authorization: Optional[str] = Header(default=None)) -> SimpleUser:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing token")
-    token = authorization.split(" ", 1)[1]
-    res = supabase.auth.get_user(token)
-    if not res.user:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    return res.user
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        header = pyjwt.get_unverified_header(token)
+        alg: str = header.get("alg", "HS256")
+
+        if alg.startswith("HS"):
+            # Symmetric — verify with the JWT secret from .env
+            payload = pyjwt.decode(
+                token,
+                SUPABASE_JWT_SECRET.strip(),
+                algorithms=[alg],
+                options={"verify_aud": False},
+            )
+        else:
+            # Asymmetric (RS256, ES256 …) — verify with Supabase public JWKS key.
+            # Keys are fetched once and cached in _jwks_client.
+            signing_key = _get_jwks_client().get_signing_key_from_jwt(token)
+            payload = pyjwt.decode(
+                token,
+                signing_key.key,
+                algorithms=[alg],
+                options={"verify_aud": False},
+            )
+
+        user_id: str = payload.get("sub", "")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token: missing sub")
+        return SimpleUser(id=user_id)
+    except HTTPException:
+        raise
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except pyjwt.InvalidTokenError as exc:
+        raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail=f"Auth error: {exc}")
+
+
+def _notify_new_notice(author_id: str, post_title: str, audience: str) -> None:
+    """Insert a notification row for every eligible user when a notice is posted."""
+    try:
+        query = supabase.table("profiles").select("id").neq("id", author_id)
+        if audience == "students":
+            query = query.eq("role", "student")
+        elif audience == "teachers":
+            query = query.eq("role", "teacher")
+        # audience == 'all' → no role filter
+        profiles_res = query.execute()
+        if not profiles_res.data:
+            return
+        rows = [
+            {
+                "recipient_id": p["id"],
+                "sender_id": author_id,
+                "notif_type": "new_notice",
+                "title": "New notice posted",
+                "body": post_title,
+                "is_read": False,
+            }
+            for p in profiles_res.data
+        ]
+        if rows:
+            supabase.table("notification").insert(rows).execute()
+    except Exception:
+        pass
 
 
 @app.get("/api/notices")
@@ -369,6 +447,7 @@ async def create_notice(
     }).execute()
     post_id = res.data[0]["id"]
     full = supabase.table("v_notice_board_posts").select("*").eq("id", post_id).single().execute()
+    _notify_new_notice(user.id, body.title, body.audience)
     return full.data
 
 

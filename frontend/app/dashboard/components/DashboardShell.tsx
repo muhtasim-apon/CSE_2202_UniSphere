@@ -5,6 +5,7 @@ import type { ReactNode } from 'react'
 import Sidebar from './Sidebar'
 import Header from './Header'
 import PageTransition from '../../components/PageTransition'
+import NotificationRealtimeListener from './NotificationRealtimeListener'
 
 type DashboardShellProps = {
   firstName: string
@@ -37,6 +38,7 @@ export default function DashboardShell({
 
   return (
     <div className="flex min-h-screen bg-background">
+      <NotificationRealtimeListener />
       <Sidebar
         collapsed={collapsed}
         mobileOpen={mobileOpen}

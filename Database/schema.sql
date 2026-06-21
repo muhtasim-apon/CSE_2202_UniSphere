@@ -46,6 +46,17 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";
 
 
 
+CREATE TYPE "public"."achievement_content_type" AS ENUM (
+    'project',
+    'certificate',
+    'research_paper',
+    'hackathon'
+);
+
+
+ALTER TYPE "public"."achievement_content_type" OWNER TO "postgres";
+
+
 CREATE TYPE "public"."app_role" AS ENUM (
     'user',
     'student',
@@ -70,6 +81,26 @@ CREATE TYPE "public"."attachment_file_type" AS ENUM (
 
 
 ALTER TYPE "public"."attachment_file_type" OWNER TO "postgres";
+
+
+CREATE TYPE "public"."chat_request_status" AS ENUM (
+    'pending',
+    'accepted',
+    'declined'
+);
+
+
+ALTER TYPE "public"."chat_request_status" OWNER TO "postgres";
+
+
+CREATE TYPE "public"."chat_room_type" AS ENUM (
+    'direct',
+    'advisor',
+    'group'
+);
+
+
+ALTER TYPE "public"."chat_room_type" OWNER TO "postgres";
 
 
 CREATE TYPE "public"."designation_val" AS ENUM (
@@ -143,6 +174,34 @@ CREATE TYPE "public"."request_status" AS ENUM (
 
 
 ALTER TYPE "public"."request_status" OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."auto_assign_grade"("p_marks" numeric, "p_total" numeric) RETURNS TABLE("grade" character varying, "grade_points" numeric)
+    LANGUAGE "plpgsql"
+    AS $$
+DECLARE
+    pct NUMERIC;
+BEGIN
+    IF p_total IS NULL OR p_total <= 0 THEN
+        RETURN QUERY SELECT 'F'::VARCHAR, 0.00::NUMERIC; RETURN;
+    END IF;
+    pct := (p_marks / p_total) * 100;
+    IF    pct >= 80 THEN RETURN QUERY SELECT 'A+'::VARCHAR, 4.00::NUMERIC;
+    ELSIF pct >= 75 THEN RETURN QUERY SELECT 'A'::VARCHAR,  3.75::NUMERIC;
+    ELSIF pct >= 70 THEN RETURN QUERY SELECT 'A-'::VARCHAR, 3.50::NUMERIC;
+    ELSIF pct >= 65 THEN RETURN QUERY SELECT 'B+'::VARCHAR, 3.25::NUMERIC;
+    ELSIF pct >= 60 THEN RETURN QUERY SELECT 'B'::VARCHAR,  3.00::NUMERIC;
+    ELSIF pct >= 55 THEN RETURN QUERY SELECT 'B-'::VARCHAR, 2.75::NUMERIC;
+    ELSIF pct >= 50 THEN RETURN QUERY SELECT 'C+'::VARCHAR, 2.50::NUMERIC;
+    ELSIF pct >= 45 THEN RETURN QUERY SELECT 'C'::VARCHAR,  2.25::NUMERIC;
+    ELSIF pct >= 40 THEN RETURN QUERY SELECT 'D'::VARCHAR,  2.00::NUMERIC;
+    ELSE                  RETURN QUERY SELECT 'F'::VARCHAR,  0.00::NUMERIC;
+    END IF;
+END;
+$$;
+
+
+ALTER FUNCTION "public"."auto_assign_grade"("p_marks" numeric, "p_total" numeric) OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."is_valid_bd_phone"("p" "text") RETURNS boolean
@@ -270,18 +329,17 @@ CREATE OR REPLACE FUNCTION "public"."enforce_student_profile_restrictions"() RET
     LANGUAGE "plpgsql"
     AS $$
 BEGIN
+    -- Service role (backend) bypasses all restrictions
     IF auth.role() = 'service_role' THEN
         RETURN NEW;
     END IF;
 
-    IF NEW.profile_id      IS DISTINCT FROM OLD.profile_id
-       OR NEW.program_id        <> OLD.program_id
-       OR NEW.student_roll      <> OLD.student_roll
-       OR NEW.batch_year        <> OLD.batch_year
-       OR NEW.current_semester  <> OLD.current_semester
-       OR NEW.cgpa              <> OLD.cgpa
-       OR NEW.total_credits     <> OLD.total_credits
-       OR NEW.is_active         <> OLD.is_active
+    -- Only lock the identity link and admin-controlled status.
+    -- student_roll, batch_year, current_semester, program_id
+    -- are now self-editable by the student.
+    -- cgpa and total_credits are auto-calculated by the backend.
+    IF NEW.profile_id IS DISTINCT FROM OLD.profile_id
+       OR NEW.is_active <> OLD.is_active
     THEN
         RAISE EXCEPTION 'PROFILE_FIELD_LOCKED: cannot modify restricted student fields';
     END IF;
@@ -292,101 +350,6 @@ $$;
 
 
 ALTER FUNCTION "public"."enforce_student_profile_restrictions"() OWNER TO "postgres";
-
-
-CREATE OR REPLACE FUNCTION "public"."fn_approve_request"("p_request_id" integer, "p_admin_id" "uuid", "p_student_roll" "text" DEFAULT NULL::"text", "p_employee_id" "text" DEFAULT NULL::"text") RETURNS "jsonb"
-    LANGUAGE "plpgsql" SECURITY DEFINER
-    SET "search_path" TO 'public'
-    AS $_$
-DECLARE
-    r               public.registration_request%ROWTYPE;
-    v_user_id       UUID;
-    v_student_id    INT;
-    v_instructor_id INT;
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM public.profiles
-        WHERE id = p_admin_id AND role = 'admin' AND is_active
-    ) THEN RAISE EXCEPTION 'FORBIDDEN'; END IF;
-
-    SELECT * INTO r FROM public.registration_request
-    WHERE request_id = p_request_id AND status = 'pending'
-    FOR UPDATE;
-    IF NOT FOUND THEN RAISE EXCEPTION 'REQUEST_NOT_FOUND_OR_PROCESSED'; END IF;
-
-    SELECT id INTO v_user_id FROM auth.users WHERE email = r.email;
-    IF v_user_id IS NULL THEN
-        RAISE EXCEPTION 'AUTH_USER_NOT_CREATED: send invite first';
-    END IF;
-
-    IF r.role_requested = 'student' THEN
-        IF TRIM(COALESCE(p_student_roll, '')) = '' THEN
-            RAISE EXCEPTION 'STUDENT_ROLL_REQUIRED';
-        END IF;
-        IF p_student_roll !~ '^[0-9]{4}-[A-Z]{2,10}-[0-9]{3,6}$' THEN
-            RAISE EXCEPTION 'INVALID_STUDENT_ROLL: format YYYY-DEPT-NNN';
-        END IF;
-        INSERT INTO public.student (
-            profile_id, program_id, first_name, last_name,
-            gender, date_of_birth, phone, student_roll, batch_year
-        ) VALUES (
-            v_user_id, r.program_id, r.first_name, r.last_name,
-            r.gender, r.date_of_birth, r.phone,
-            p_student_roll, r.batch_year
-        ) RETURNING student_id INTO v_student_id;
-
-    ELSIF r.role_requested = 'teacher' THEN
-        IF TRIM(COALESCE(p_employee_id, '')) = '' THEN
-            RAISE EXCEPTION 'EMPLOYEE_ID_REQUIRED';
-        END IF;
-        IF p_employee_id !~ '^EMP-[0-9]{3,6}$' THEN
-            RAISE EXCEPTION 'INVALID_EMPLOYEE_ID: format EMP-XXXXXX';
-        END IF;
-        INSERT INTO public.instructor (
-            profile_id, dept_id, first_name, last_name,
-            gender, date_of_birth, phone,
-            employee_id, designation, specialization
-        ) VALUES (
-            v_user_id, r.dept_id, r.first_name, r.last_name,
-            r.gender, r.date_of_birth, r.phone,
-            p_employee_id, r.designation, r.specialization
-        ) RETURNING instructor_id INTO v_instructor_id;
-    END IF;
-
-    INSERT INTO public.profiles (
-        id, role, first_name, last_name, phone,
-        student_id, instructor_id
-    ) VALUES (
-        v_user_id, r.role_requested,
-        r.first_name, r.last_name, r.phone,
-        v_student_id, v_instructor_id
-    )
-    ON CONFLICT (id) DO UPDATE SET
-        role          = EXCLUDED.role,
-        first_name    = EXCLUDED.first_name,
-        last_name     = EXCLUDED.last_name,
-        phone         = EXCLUDED.phone,
-        student_id    = EXCLUDED.student_id,
-        instructor_id = EXCLUDED.instructor_id,
-        updated_at    = NOW();
-
-    UPDATE public.registration_request SET
-        status      = 'approved',
-        reviewed_by = p_admin_id,
-        reviewed_at = NOW()
-    WHERE request_id = p_request_id;
-
-    RETURN jsonb_build_object(
-        'user_id',       v_user_id,
-        'role',          r.role_requested,
-        'student_id',    v_student_id,
-        'instructor_id', v_instructor_id
-    );
-END;
-$_$;
-
-
-ALTER FUNCTION "public"."fn_approve_request"("p_request_id" integer, "p_admin_id" "uuid", "p_student_roll" "text", "p_employee_id" "text") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."fn_change_role"("p_admin_id" "uuid", "p_target_id" "uuid", "p_new_role" "public"."app_role") RETURNS "void"
@@ -424,162 +387,136 @@ $$;
 ALTER FUNCTION "public"."fn_change_role"("p_admin_id" "uuid", "p_target_id" "uuid", "p_new_role" "public"."app_role") OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "public"."fn_reject_request"("p_request_id" integer, "p_admin_id" "uuid", "p_reason" "text" DEFAULT NULL::"text") RETURNS "void"
-    LANGUAGE "plpgsql" SECURITY DEFINER
-    SET "search_path" TO 'public'
-    AS $$
-BEGIN
-    IF NOT EXISTS (
-        SELECT 1 FROM public.profiles
-        WHERE id = p_admin_id AND role = 'admin' AND is_active
-    ) THEN RAISE EXCEPTION 'FORBIDDEN'; END IF;
-
-    IF p_reason IS NOT NULL AND LENGTH(TRIM(p_reason)) < 5 THEN
-        RAISE EXCEPTION 'REJECTION_REASON_TOO_SHORT';
-    END IF;
-
-    UPDATE public.registration_request SET
-        status           = 'rejected',
-        reviewed_by      = p_admin_id,
-        reviewed_at      = NOW(),
-        rejection_reason = NULLIF(TRIM(p_reason), '')
-    WHERE request_id = p_request_id AND status = 'pending';
-
-    IF NOT FOUND THEN RAISE EXCEPTION 'REQUEST_NOT_FOUND_OR_PROCESSED'; END IF;
-END;
-$$;
-
-
-ALTER FUNCTION "public"."fn_reject_request"("p_request_id" integer, "p_admin_id" "uuid", "p_reason" "text") OWNER TO "postgres";
-
-
-CREATE OR REPLACE FUNCTION "public"."fn_submit_signup_request"("p_role" "text", "p_email" "text", "p_first_name" "text", "p_last_name" "text", "p_phone" "text" DEFAULT NULL::"text", "p_gender" "text" DEFAULT NULL::"text", "p_dob" "date" DEFAULT NULL::"date", "p_program_id" integer DEFAULT NULL::integer, "p_batch_year" smallint DEFAULT NULL::smallint, "p_dept_id" integer DEFAULT NULL::integer, "p_designation" "text" DEFAULT NULL::"text", "p_specialization" "text" DEFAULT NULL::"text") RETURNS integer
+CREATE OR REPLACE FUNCTION "public"."fn_get_or_create_direct_room"("p_other_profile_id" "uuid") RETURNS "uuid"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO 'public'
     AS $$
 DECLARE
-    v_token  TEXT;
-    v_req_id INT;
-    v_count  INT;
-    v_email  TEXT := LOWER(TRIM(p_email));
-    v_phone  TEXT;
+  v_room_id UUID;
+  v_my_id   UUID := auth.uid();
 BEGIN
-    IF p_role NOT IN ('student','teacher') THEN
-        RAISE EXCEPTION 'INVALID_ROLE';
-    END IF;
-    IF NOT public.is_valid_email(v_email) THEN
-        RAISE EXCEPTION 'INVALID_EMAIL';
-    END IF;
-    IF NOT public.is_valid_name(TRIM(p_first_name)) THEN
-        RAISE EXCEPTION 'INVALID_FIRST_NAME';
-    END IF;
-    IF NOT public.is_valid_name(TRIM(p_last_name)) THEN
-        RAISE EXCEPTION 'INVALID_LAST_NAME';
-    END IF;
+  -- Find existing direct room shared by both users
+  SELECT crm1.room_id INTO v_room_id
+  FROM public.chat_room_member crm1
+  JOIN public.chat_room_member crm2 ON crm1.room_id = crm2.room_id
+  JOIN public.chat_room cr ON cr.id = crm1.room_id
+  WHERE crm1.profile_id = v_my_id
+    AND crm2.profile_id = p_other_profile_id
+    AND cr.type = 'direct'
+  LIMIT 1;
 
-    IF p_phone IS NOT NULL THEN
-        v_phone := public.normalise_bd_phone(TRIM(p_phone));
-        IF v_phone IS NULL THEN
-            RAISE EXCEPTION 'INVALID_BD_PHONE: use 01[3-9]XXXXXXXX';
-        END IF;
-    END IF;
+  IF v_room_id IS NOT NULL THEN
+    RETURN v_room_id;
+  END IF;
 
-    IF p_dob IS NOT NULL THEN
-        IF p_dob >= (CURRENT_DATE - INTERVAL '15 years') THEN
-            RAISE EXCEPTION 'DOB: must be at least 15 years old';
-        END IF;
-        IF p_dob <= (CURRENT_DATE - INTERVAL '80 years') THEN
-            RAISE EXCEPTION 'DOB: implausible date';
-        END IF;
-    END IF;
+  -- Create new direct room
+  INSERT INTO public.chat_room (type, created_by)
+  VALUES ('direct', v_my_id)
+  RETURNING id INTO v_room_id;
 
-    SELECT COUNT(*) INTO v_count FROM public.registration_request
-        WHERE email = v_email AND status = 'pending';
-    IF v_count > 0 THEN RAISE EXCEPTION 'REQUEST_ALREADY_PENDING'; END IF;
+  INSERT INTO public.chat_room_member (room_id, profile_id, member_role) VALUES
+    (v_room_id, v_my_id, 'owner'),
+    (v_room_id, p_other_profile_id, 'member');
 
-    SELECT COUNT(*) INTO v_count FROM auth.users WHERE email = v_email;
-    IF v_count > 0 THEN RAISE EXCEPTION 'EMAIL_ALREADY_REGISTERED'; END IF;
-
-    IF v_phone IS NOT NULL THEN
-        SELECT COUNT(*) INTO v_count FROM public.registration_request
-            WHERE phone = v_phone AND status = 'pending';
-        IF v_count > 0 THEN RAISE EXCEPTION 'PHONE_IN_PENDING_REQUEST'; END IF;
-
-        SELECT COUNT(*) INTO v_count FROM public.profiles WHERE phone = v_phone;
-        IF v_count > 0 THEN RAISE EXCEPTION 'PHONE_ALREADY_REGISTERED'; END IF;
-    END IF;
-
-    IF p_role = 'student' THEN
-        IF p_program_id IS NULL THEN RAISE EXCEPTION 'REQUIRED: program_id'; END IF;
-        IF p_batch_year IS NULL  THEN RAISE EXCEPTION 'REQUIRED: batch_year'; END IF;
-        IF p_dob IS NULL         THEN RAISE EXCEPTION 'REQUIRED: date_of_birth'; END IF;
-        IF NOT EXISTS (
-            SELECT 1 FROM public.program WHERE program_id = p_program_id AND is_active
-        ) THEN RAISE EXCEPTION 'INVALID_PROGRAM_ID'; END IF;
-    END IF;
-
-    IF p_role = 'teacher' THEN
-        IF p_dept_id IS NULL     THEN RAISE EXCEPTION 'REQUIRED: dept_id'; END IF;
-        IF p_designation IS NULL THEN RAISE EXCEPTION 'REQUIRED: designation'; END IF;
-        IF NOT EXISTS (
-            SELECT 1 FROM public.department WHERE dept_id = p_dept_id AND is_active
-        ) THEN RAISE EXCEPTION 'INVALID_DEPT_ID'; END IF;
-    END IF;
-
-    v_token := encode(gen_random_bytes(32), 'hex');
-
-    INSERT INTO public.registration_request (
-        role_requested, email, first_name, last_name,
-        phone, gender, date_of_birth,
-        program_id, batch_year,
-        dept_id, designation, specialization,
-        verification_token, token_expires_at
-    ) VALUES (
-        p_role::public.app_role,
-        v_email,
-        TRIM(p_first_name), TRIM(p_last_name),
-        v_phone,
-        p_gender::public.gender_val,
-        p_dob,
-        p_program_id, p_batch_year,
-        p_dept_id,
-        p_designation::public.designation_val,
-        NULLIF(TRIM(p_specialization), ''),
-        v_token, NOW() + INTERVAL '48 hours'
-    )
-    RETURNING request_id INTO v_req_id;
-
-    RETURN v_req_id;
+  RETURN v_room_id;
 END;
 $$;
 
 
-ALTER FUNCTION "public"."fn_submit_signup_request"("p_role" "text", "p_email" "text", "p_first_name" "text", "p_last_name" "text", "p_phone" "text", "p_gender" "text", "p_dob" "date", "p_program_id" integer, "p_batch_year" smallint, "p_dept_id" integer, "p_designation" "text", "p_specialization" "text") OWNER TO "postgres";
+ALTER FUNCTION "public"."fn_get_or_create_direct_room"("p_other_profile_id" "uuid") OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "public"."fn_verify_email_token"("p_token" "text") RETURNS "text"
+CREATE OR REPLACE FUNCTION "public"."fn_get_or_create_direct_room"("p_other_profile_id" "uuid", "p_my_profile_id" "uuid" DEFAULT NULL::"uuid") RETURNS "uuid"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO 'public'
-    AS $_$
-BEGIN
-    IF p_token IS NULL OR p_token !~ '^[0-9a-f]{64}$' THEN
-        RETURN 'TOKEN_INVALID_FORMAT';
+    AS $$
+  DECLARE
+    v_room_id UUID;
+    v_my_id   UUID := COALESCE(p_my_profile_id, auth.uid());
+  BEGIN
+    SELECT crm1.room_id INTO v_room_id
+    FROM public.chat_room_member crm1
+    JOIN public.chat_room_member crm2 ON crm1.room_id =
+  crm2.room_id
+    JOIN public.chat_room cr ON cr.id = crm1.room_id
+    WHERE crm1.profile_id = v_my_id
+      AND crm2.profile_id = p_other_profile_id
+      AND cr.type = 'direct'
+    LIMIT 1;
+
+    IF v_room_id IS NOT NULL THEN
+      RETURN v_room_id;
     END IF;
 
-    UPDATE public.registration_request
-    SET email_verified = TRUE
-    WHERE verification_token = p_token
-      AND token_expires_at   > NOW()
-      AND email_verified     = FALSE
-      AND status             = 'pending';
+    INSERT INTO public.chat_room (type, created_by)
+    VALUES ('direct', v_my_id)
+    RETURNING id INTO v_room_id;
 
-    IF NOT FOUND THEN RETURN 'TOKEN_INVALID_OR_EXPIRED'; END IF;
-    RETURN 'OK';
+    INSERT INTO public.chat_room_member (room_id, profile_id,
+  member_role) VALUES
+      (v_room_id, v_my_id, 'owner'),
+      (v_room_id, p_other_profile_id, 'member');
+
+    RETURN v_room_id;
+  END;
+  $$;
+
+
+ALTER FUNCTION "public"."fn_get_or_create_direct_room"("p_other_profile_id" "uuid", "p_my_profile_id" "uuid") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."fn_hash_password"("p_password" "text") RETURNS "text"
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO 'extensions', 'public'
+    AS $$
+  SELECT extensions.crypt(p_password, extensions.gen_salt('bf'));
+$$;
+
+
+ALTER FUNCTION "public"."fn_hash_password"("p_password" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."fn_join_room_by_code"("p_code" "text", "p_password" "text" DEFAULT NULL::"text") RETURNS "uuid"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'extensions', 'public'
+    AS $$
+DECLARE
+  v_room    public.chat_room%ROWTYPE;
+  v_my_id   UUID := auth.uid();
+BEGIN
+  SELECT * INTO v_room FROM public.chat_room WHERE room_code = p_code;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Room not found for code: %', p_code;
+  END IF;
+
+  IF v_room.password_hash IS NOT NULL THEN
+    IF p_password IS NULL OR extensions.crypt(p_password, v_room.password_hash) <> v_room.password_hash THEN
+      RAISE EXCEPTION 'Incorrect password';
+    END IF;
+  END IF;
+
+  -- Add member (ignore if already a member)
+  INSERT INTO public.chat_room_member (room_id, profile_id, member_role)
+  VALUES (v_room.id, v_my_id, 'member')
+  ON CONFLICT (room_id, profile_id) DO NOTHING;
+
+  RETURN v_room.id;
 END;
-$_$;
+$$;
 
 
-ALTER FUNCTION "public"."fn_verify_email_token"("p_token" "text") OWNER TO "postgres";
+ALTER FUNCTION "public"."fn_join_room_by_code"("p_code" "text", "p_password" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."fn_profile_id_by_email"("p_email" "text") RETURNS "uuid"
+    LANGUAGE "sql" SECURITY DEFINER
+    AS $$
+    SELECT id FROM auth.users WHERE email = lower(p_email) LIMIT 1;
+  $$;
+
+
+ALTER FUNCTION "public"."fn_profile_id_by_email"("p_email" "text") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."handle_new_user"() RETURNS "trigger"
@@ -619,6 +556,20 @@ $$;
 
 
 ALTER FUNCTION "public"."handle_new_user"() OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."is_room_member"("p_room_id" "uuid") RETURNS boolean
+    LANGUAGE "sql" STABLE SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.chat_room_member
+    WHERE room_id = p_room_id AND profile_id = auth.uid()
+  );
+$$;
+
+
+ALTER FUNCTION "public"."is_room_member"("p_room_id" "uuid") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."is_valid_email"("e" "text") RETURNS boolean
@@ -751,6 +702,463 @@ $$;
 ALTER FUNCTION "public"."update_notice_board_post_updated_at"() OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."achievement_comment" (
+    "comment_id" integer NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "achievement_type" "public"."achievement_content_type" NOT NULL,
+    "target_id" integer NOT NULL,
+    "parent_comment_id" integer,
+    "body" "text" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "achievement_comment_body_check" CHECK ((("char_length"("body") >= 1) AND ("char_length"("body") <= 1000)))
+);
+
+
+ALTER TABLE "public"."achievement_comment" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."achievement_comment_comment_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."achievement_comment_comment_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."achievement_comment_comment_id_seq" OWNED BY "public"."achievement_comment"."comment_id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."achievement_rating" (
+    "rating_id" integer NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "achievement_type" "public"."achievement_content_type" NOT NULL,
+    "target_id" integer NOT NULL,
+    "rating" smallint NOT NULL,
+    "rated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "achievement_rating_rating_check" CHECK ((("rating" >= 1) AND ("rating" <= 5)))
+);
+
+
+ALTER TABLE "public"."achievement_rating" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."achievement_rating_rating_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."achievement_rating_rating_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."achievement_rating_rating_id_seq" OWNED BY "public"."achievement_rating"."rating_id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."achievement_reaction" (
+    "reaction_id" integer NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "achievement_type" "public"."achievement_content_type" NOT NULL,
+    "target_id" integer NOT NULL,
+    "emoji" character varying(10) NOT NULL,
+    "reacted_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "achievement_reaction_emoji_check" CHECK ((("emoji")::"text" = ANY ((ARRAY['👍'::character varying, '❤️'::character varying, '🔥'::character varying, '🎉'::character varying, '🤩'::character varying, '💡'::character varying, '👏'::character varying, '😮'::character varying, '🏆'::character varying, '💪'::character varying])::"text"[])))
+);
+
+
+ALTER TABLE "public"."achievement_reaction" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."achievement_reaction_reaction_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."achievement_reaction_reaction_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."achievement_reaction_reaction_id_seq" OWNED BY "public"."achievement_reaction"."reaction_id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."advisor" (
+    "id" bigint NOT NULL,
+    "student_id" integer NOT NULL,
+    "advisor_instructor_id" integer NOT NULL,
+    "assigned_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."advisor" OWNER TO "postgres";
+
+
+ALTER TABLE "public"."advisor" ALTER COLUMN "id" ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME "public"."advisor_id_seq"
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."attendance_record" (
+    "record_id" integer NOT NULL,
+    "session_id" integer NOT NULL,
+    "student_id" integer NOT NULL,
+    "status" character varying(10) DEFAULT 'Present'::character varying NOT NULL,
+    "remarks" character varying(200),
+    "marked_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "attendance_record_status_check" CHECK ((("status")::"text" = ANY ((ARRAY['Present'::character varying, 'Absent'::character varying, 'Late'::character varying, 'Excused'::character varying])::"text"[])))
+);
+
+
+ALTER TABLE "public"."attendance_record" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."attendance_record_record_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."attendance_record_record_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."attendance_record_record_id_seq" OWNED BY "public"."attendance_record"."record_id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."attendance_session" (
+    "session_id" integer NOT NULL,
+    "manual_course_id" integer NOT NULL,
+    "instructor_id" integer NOT NULL,
+    "session_date" "date" DEFAULT CURRENT_DATE NOT NULL,
+    "session_title" character varying(255),
+    "topic" character varying(255),
+    "notes" "text",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."attendance_session" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."attendance_session_session_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."attendance_session_session_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."attendance_session_session_id_seq" OWNED BY "public"."attendance_session"."session_id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."certificate" (
+    "certificate_id" integer NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "cert_name" character varying(255) NOT NULL,
+    "issuing_org" character varying(255) NOT NULL,
+    "issue_month" smallint,
+    "issue_year" smallint NOT NULL,
+    "expiry_month" smallint,
+    "expiry_year" smallint,
+    "credential_id" character varying(255),
+    "credential_url" character varying(500),
+    "is_published" boolean DEFAULT true NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "certificate_check" CHECK ((("expiry_year" IS NULL) OR ("expiry_year" > "issue_year") OR (("expiry_year" = "issue_year") AND (("expiry_month" IS NULL) OR ("issue_month" IS NULL) OR ("expiry_month" >= "issue_month"))))),
+    CONSTRAINT "certificate_expiry_month_check" CHECK ((("expiry_month" >= 1) AND ("expiry_month" <= 12))),
+    CONSTRAINT "certificate_expiry_year_check" CHECK ((("expiry_year" >= 2000) AND ("expiry_year" <= 2100))),
+    CONSTRAINT "certificate_issue_month_check" CHECK ((("issue_month" >= 1) AND ("issue_month" <= 12))),
+    CONSTRAINT "certificate_issue_year_check" CHECK ((("issue_year" >= 2000) AND ("issue_year" <= 2100)))
+);
+
+
+ALTER TABLE "public"."certificate" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."certificate_certificate_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."certificate_certificate_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."certificate_certificate_id_seq" OWNED BY "public"."certificate"."certificate_id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."certificate_media" (
+    "media_id" integer NOT NULL,
+    "certificate_id" integer NOT NULL,
+    "file_url" character varying(500) NOT NULL,
+    "file_name" character varying(255) NOT NULL,
+    "file_type" character varying(50) NOT NULL,
+    "file_size_bytes" bigint NOT NULL,
+    "mime_type" character varying(100),
+    "uploaded_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "certificate_media_file_size_bytes_check" CHECK ((("file_size_bytes" > 0) AND ("file_size_bytes" <= 52428800))),
+    CONSTRAINT "certificate_media_file_type_check" CHECK ((("file_type")::"text" = ANY ((ARRAY['image'::character varying, 'video'::character varying, 'audio'::character varying, 'document'::character varying, 'presentation'::character varying, 'site'::character varying, 'other'::character varying])::"text"[])))
+);
+
+
+ALTER TABLE "public"."certificate_media" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."certificate_media_media_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."certificate_media_media_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."certificate_media_media_id_seq" OWNED BY "public"."certificate_media"."media_id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."certificate_skill" (
+    "certificate_id" integer NOT NULL,
+    "skill_id" integer NOT NULL
+);
+
+
+ALTER TABLE "public"."certificate_skill" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."cgpa_record" (
+    "record_id" integer NOT NULL,
+    "student_id" integer NOT NULL,
+    "cgpa" numeric(4,2) NOT NULL,
+    "total_credits" numeric(6,1) DEFAULT 0 NOT NULL,
+    "total_points" numeric(8,2) DEFAULT 0 NOT NULL,
+    "exam_count" integer DEFAULT 0 NOT NULL,
+    "semester" character varying(50),
+    "source" character varying(20) DEFAULT 'exam_marks'::character varying NOT NULL,
+    "calculated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "cgpa_record_cgpa_check" CHECK ((("cgpa" >= (0)::numeric) AND ("cgpa" <= (4)::numeric))),
+    CONSTRAINT "cgpa_record_source_check" CHECK ((("source")::"text" = ANY ((ARRAY['exam_marks'::character varying, 'manual'::character varying])::"text"[])))
+);
+
+
+ALTER TABLE "public"."cgpa_record" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."cgpa_record_record_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."cgpa_record_record_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."cgpa_record_record_id_seq" OWNED BY "public"."cgpa_record"."record_id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."chat_message" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "room_id" "uuid" NOT NULL,
+    "sender_id" "uuid" NOT NULL,
+    "body" "text",
+    "reply_to" "uuid",
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "edited_at" timestamp with time zone
+);
+
+
+ALTER TABLE "public"."chat_message" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."chat_message_attachment" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "message_id" "uuid" NOT NULL,
+    "file_url" "text" NOT NULL,
+    "file_name" character varying(255) NOT NULL,
+    "file_type" "public"."attachment_file_type" DEFAULT 'other'::"public"."attachment_file_type" NOT NULL,
+    "file_size" bigint,
+    "mime_type" character varying(100)
+);
+
+
+ALTER TABLE "public"."chat_message_attachment" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."chat_message_reaction" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "message_id" "uuid" NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "reaction" "public"."reaction_type" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."chat_message_reaction" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."chat_request" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "from_id" "uuid" NOT NULL,
+    "to_id" "uuid" NOT NULL,
+    "status" "public"."chat_request_status" DEFAULT 'pending'::"public"."chat_request_status" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "responded_at" timestamp with time zone,
+    CONSTRAINT "chat_request_no_self" CHECK (("from_id" <> "to_id"))
+);
+
+
+ALTER TABLE "public"."chat_request" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."chat_room" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "type" "public"."chat_room_type" NOT NULL,
+    "title" "text",
+    "room_code" "text",
+    "password_hash" "text",
+    "is_ephemeral" boolean DEFAULT false NOT NULL,
+    "created_by" "uuid" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."chat_room" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."chat_room_member" (
+    "room_id" "uuid" NOT NULL,
+    "profile_id" "uuid" NOT NULL,
+    "member_role" "text" DEFAULT 'member'::"text" NOT NULL,
+    "joined_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "last_read_at" timestamp with time zone,
+    CONSTRAINT "chat_room_member_member_role_check" CHECK (("member_role" = ANY (ARRAY['owner'::"text", 'member'::"text"])))
+);
+
+
+ALTER TABLE "public"."chat_room_member" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."course_invite" (
+    "invite_id" integer NOT NULL,
+    "manual_course_id" integer NOT NULL,
+    "student_id" integer NOT NULL,
+    "invited_by" integer NOT NULL,
+    "status" character varying(20) DEFAULT 'pending'::character varying NOT NULL,
+    "message" character varying(500),
+    "sent_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "responded_at" timestamp with time zone,
+    CONSTRAINT "course_invite_status_check" CHECK ((("status")::"text" = ANY ((ARRAY['pending'::character varying, 'accepted'::character varying, 'dismissed'::character varying])::"text"[])))
+);
+
+
+ALTER TABLE "public"."course_invite" OWNER TO "postgres";
+
+
+COMMENT ON TABLE "public"."course_invite" IS 'Teacher-initiated invite to a student. One row per course-student pair; UPSERT on resend.';
+
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."course_invite_invite_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."course_invite_invite_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."course_invite_invite_id_seq" OWNED BY "public"."course_invite"."invite_id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."course_resource" (
+    "resource_id" integer NOT NULL,
+    "manual_course_id" integer NOT NULL,
+    "uploaded_by" integer NOT NULL,
+    "title" character varying(500) NOT NULL,
+    "description" "text",
+    "resource_type" character varying(20) NOT NULL,
+    "file_url" character varying(1000),
+    "file_name" character varying(500),
+    "file_size_bytes" bigint,
+    "mime_type" character varying(100),
+    "storage_path" character varying(1000),
+    "external_url" character varying(1000),
+    "is_published" boolean DEFAULT true NOT NULL,
+    "sort_order" integer DEFAULT 0 NOT NULL,
+    "download_count" integer DEFAULT 0 NOT NULL,
+    "uploaded_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "course_resource_download_count_check" CHECK (("download_count" >= 0)),
+    CONSTRAINT "course_resource_file_size_bytes_check" CHECK (("file_size_bytes" >= 0)),
+    CONSTRAINT "course_resource_resource_type_check" CHECK ((("resource_type")::"text" = ANY ((ARRAY['pdf'::character varying, 'image'::character varying, 'video'::character varying, 'audio'::character varying, 'document'::character varying, 'presentation'::character varying, 'drive_link'::character varying, 'external_link'::character varying, 'other'::character varying])::"text"[])))
+);
+
+
+ALTER TABLE "public"."course_resource" OWNER TO "postgres";
+
+
+COMMENT ON COLUMN "public"."course_resource"."file_size_bytes" IS 'Up to 2 GB (2147483648 bytes) — enforced at application layer.';
+
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."course_resource_resource_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."course_resource_resource_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."course_resource_resource_id_seq" OWNED BY "public"."course_resource"."resource_id";
+
+
+
 CREATE TABLE IF NOT EXISTS "public"."department" (
     "dept_id" integer NOT NULL,
     "dept_name" "text" NOT NULL,
@@ -778,6 +1186,82 @@ ALTER SEQUENCE "public"."department_dept_id_seq" OWNER TO "postgres";
 
 
 ALTER SEQUENCE "public"."department_dept_id_seq" OWNED BY "public"."department"."dept_id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."exam" (
+    "exam_id" integer NOT NULL,
+    "manual_course_id" integer,
+    "exam_name" character varying(255) NOT NULL,
+    "exam_type" character varying(30) DEFAULT 'Midterm'::character varying NOT NULL,
+    "total_marks" numeric(6,2) NOT NULL,
+    "credit_hours" numeric(3,1) DEFAULT 3.0,
+    "exam_date" "date",
+    "semester" character varying(50),
+    "academic_year" character varying(20),
+    "description" "text",
+    "is_published" boolean DEFAULT true NOT NULL,
+    "created_by" "uuid" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "exam_credit_hours_check" CHECK (("credit_hours" > (0)::numeric)),
+    CONSTRAINT "exam_exam_type_check" CHECK ((("exam_type")::"text" = ANY ((ARRAY['Midterm'::character varying, 'Final'::character varying, 'Quiz'::character varying, 'Assignment'::character varying, 'Lab'::character varying, 'Viva'::character varying, 'Presentation'::character varying, 'Other'::character varying])::"text"[]))),
+    CONSTRAINT "exam_total_marks_check" CHECK (("total_marks" > (0)::numeric))
+);
+
+
+ALTER TABLE "public"."exam" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."exam_exam_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."exam_exam_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."exam_exam_id_seq" OWNED BY "public"."exam"."exam_id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."exam_mark" (
+    "mark_id" integer NOT NULL,
+    "exam_id" integer NOT NULL,
+    "student_id" integer NOT NULL,
+    "marks_obtained" numeric(6,2) NOT NULL,
+    "grade" character varying(5),
+    "grade_points" numeric(3,2),
+    "remarks" "text",
+    "entered_by" "uuid" NOT NULL,
+    "entered_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "exam_mark_grade_check" CHECK ((("grade")::"text" = ANY ((ARRAY['A+'::character varying, 'A'::character varying, 'A-'::character varying, 'B+'::character varying, 'B'::character varying, 'B-'::character varying, 'C+'::character varying, 'C'::character varying, 'D'::character varying, 'F'::character varying])::"text"[]))),
+    CONSTRAINT "exam_mark_grade_points_check" CHECK ((("grade_points" >= (0)::numeric) AND ("grade_points" <= (4)::numeric))),
+    CONSTRAINT "exam_mark_marks_obtained_check" CHECK (("marks_obtained" >= (0)::numeric))
+);
+
+
+ALTER TABLE "public"."exam_mark" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."exam_mark_mark_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."exam_mark_mark_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."exam_mark_mark_id_seq" OWNED BY "public"."exam_mark"."mark_id";
 
 
 
@@ -832,24 +1316,40 @@ ALTER SEQUENCE "public"."instructor_instructor_id_seq" OWNED BY "public"."instru
 
 
 
-CREATE TABLE IF NOT EXISTS "public"."login_attempt" (
-    "attempt_id" bigint NOT NULL,
-    "email" "text" NOT NULL,
-    "ip_address" "inet",
-    "attempted_at" timestamp with time zone DEFAULT "now"() NOT NULL,
-    "success" boolean DEFAULT false NOT NULL,
-    "failure_reason" "text",
-    CONSTRAINT "la_failure_has_reason" CHECK (("success" OR ("failure_reason" IS NOT NULL))),
-    CONSTRAINT "la_success_no_reason" CHECK (((NOT "success") OR ("failure_reason" IS NULL))),
-    CONSTRAINT "login_attempt_email_check" CHECK ((("length"("email") >= 6) AND ("length"("email") <= 150))),
-    CONSTRAINT "login_attempt_failure_reason_check" CHECK (("failure_reason" = ANY (ARRAY['USER_NOT_FOUND'::"text", 'ACCOUNT_INACTIVE'::"text", 'EMAIL_NOT_VERIFIED'::"text", 'ROLE_NOT_PERMITTED'::"text"])))
+CREATE TABLE IF NOT EXISTS "public"."manual_course" (
+    "manual_course_id" integer NOT NULL,
+    "instructor_id" integer NOT NULL,
+    "dept_id" integer,
+    "course_name" character varying(255) NOT NULL,
+    "course_code" character varying(50),
+    "description" "text",
+    "credit_hours" numeric(3,1) DEFAULT 3.0,
+    "enroll_code" character varying(20) NOT NULL,
+    "semester" character varying(50),
+    "academic_year" character varying(20),
+    "is_active" boolean DEFAULT true NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "join_link_token" character varying(32) DEFAULT "encode"("extensions"."gen_random_bytes"(16), 'hex'::"text") NOT NULL,
+    "semester_number" smallint,
+    CONSTRAINT "manual_course_credit_hours_check" CHECK (("credit_hours" > (0)::numeric)),
+    CONSTRAINT "manual_course_semester_number_check" CHECK ((("semester_number" >= 1) AND ("semester_number" <= 8)))
 );
 
 
-ALTER TABLE "public"."login_attempt" OWNER TO "postgres";
+ALTER TABLE "public"."manual_course" OWNER TO "postgres";
 
 
-CREATE SEQUENCE IF NOT EXISTS "public"."login_attempt_attempt_id_seq"
+COMMENT ON COLUMN "public"."manual_course"."join_link_token" IS 'URL-safe hex token for shareable join link. Unique per course, immutable after creation.';
+
+
+
+COMMENT ON COLUMN "public"."manual_course"."semester_number" IS '1=Y1S1, 2=Y1S2, 3=Y2S1, 4=Y2S2, 5=Y3S1, 6=Y3S2, 7=Y4S1, 8=Y4S2';
+
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."manual_course_manual_course_id_seq"
+    AS integer
     START WITH 1
     INCREMENT BY 1
     NO MINVALUE
@@ -857,10 +1357,38 @@ CREATE SEQUENCE IF NOT EXISTS "public"."login_attempt_attempt_id_seq"
     CACHE 1;
 
 
-ALTER SEQUENCE "public"."login_attempt_attempt_id_seq" OWNER TO "postgres";
+ALTER SEQUENCE "public"."manual_course_manual_course_id_seq" OWNER TO "postgres";
 
 
-ALTER SEQUENCE "public"."login_attempt_attempt_id_seq" OWNED BY "public"."login_attempt"."attempt_id";
+ALTER SEQUENCE "public"."manual_course_manual_course_id_seq" OWNED BY "public"."manual_course"."manual_course_id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."manual_enrollment" (
+    "enrollment_id" integer NOT NULL,
+    "manual_course_id" integer NOT NULL,
+    "student_id" integer NOT NULL,
+    "enrolled_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "is_active" boolean DEFAULT true NOT NULL
+);
+
+
+ALTER TABLE "public"."manual_enrollment" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."manual_enrollment_enrollment_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."manual_enrollment_enrollment_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."manual_enrollment_enrollment_id_seq" OWNED BY "public"."manual_enrollment"."enrollment_id";
 
 
 
@@ -950,6 +1478,40 @@ CREATE TABLE IF NOT EXISTS "public"."notice_board_reaction" (
 ALTER TABLE "public"."notice_board_reaction" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."notification" (
+    "notification_id" integer NOT NULL,
+    "recipient_id" "uuid" NOT NULL,
+    "sender_id" "uuid",
+    "notif_type" character varying(60) NOT NULL,
+    "title" character varying(255) NOT NULL,
+    "body" "text",
+    "achievement_type" "public"."achievement_content_type",
+    "target_id" integer,
+    "is_read" boolean DEFAULT false NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "notification_notif_type_check" CHECK ((("notif_type")::"text" = ANY ((ARRAY['new_project'::character varying, 'new_certificate'::character varying, 'new_research_paper'::character varying, 'new_comment'::character varying, 'new_reaction'::character varying, 'new_rating'::character varying, 'new_notice'::character varying, 'new_event'::character varying, 'general'::character varying])::"text"[])))
+);
+
+
+ALTER TABLE "public"."notification" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."notification_notification_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."notification_notification_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."notification_notification_id_seq" OWNED BY "public"."notification"."notification_id";
+
+
+
 CREATE TABLE IF NOT EXISTS "public"."program" (
     "program_id" integer NOT NULL,
     "dept_id" integer NOT NULL,
@@ -987,53 +1549,58 @@ ALTER SEQUENCE "public"."program_program_id_seq" OWNED BY "public"."program"."pr
 
 
 
-CREATE TABLE IF NOT EXISTS "public"."registration_request" (
-    "request_id" integer NOT NULL,
-    "role_requested" "public"."app_role" NOT NULL,
-    "email" "text" NOT NULL,
-    "first_name" "text" NOT NULL,
-    "last_name" "text" NOT NULL,
-    "phone" "text",
-    "gender" "public"."gender_val",
-    "date_of_birth" "date",
-    "program_id" integer,
-    "batch_year" smallint,
-    "dept_id" integer,
-    "designation" "public"."designation_val",
-    "specialization" "text",
-    "email_verified" boolean DEFAULT false NOT NULL,
-    "verification_token" "text",
-    "token_expires_at" timestamp with time zone,
-    "status" "public"."request_status" DEFAULT 'pending'::"public"."request_status" NOT NULL,
-    "reviewed_by" "uuid",
-    "reviewed_at" timestamp with time zone,
-    "rejection_reason" "text",
-    "submitted_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+CREATE TABLE IF NOT EXISTS "public"."project" (
+    "project_id" integer NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "title" character varying(255) NOT NULL,
+    "description" "text",
+    "thumbnail_url" character varying(500),
+    "github_url" character varying(500),
+    "live_demo_url" character varying(500),
+    "start_month" smallint,
+    "start_year" smallint,
+    "end_month" smallint,
+    "end_year" smallint,
+    "is_current" boolean DEFAULT false NOT NULL,
+    "associated_with" character varying(200),
+    "is_published" boolean DEFAULT true NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
-    CONSTRAINT "registration_request_batch_year_check" CHECK ((("batch_year" IS NULL) OR (("batch_year" >= 2000) AND ("batch_year" <= ((EXTRACT(year FROM CURRENT_DATE))::smallint + 1))))),
-    CONSTRAINT "registration_request_date_of_birth_check" CHECK ((("date_of_birth" IS NULL) OR (("date_of_birth" < CURRENT_DATE) AND ("date_of_birth" > (CURRENT_DATE - '80 years'::interval)) AND ("date_of_birth" <= (CURRENT_DATE - '15 years'::interval))))),
-    CONSTRAINT "registration_request_email_check" CHECK ("public"."is_valid_email"("email")),
-    CONSTRAINT "registration_request_first_name_check" CHECK ("public"."is_valid_name"("first_name")),
-    CONSTRAINT "registration_request_last_name_check" CHECK ("public"."is_valid_name"("last_name")),
-    CONSTRAINT "registration_request_phone_check" CHECK ((("phone" IS NULL) OR "public"."is_valid_bd_phone"("phone"))),
-    CONSTRAINT "registration_request_rejection_reason_check" CHECK ((("rejection_reason" IS NULL) OR (("length"(TRIM(BOTH FROM "rejection_reason")) >= 5) AND ("length"(TRIM(BOTH FROM "rejection_reason")) <= 500)))),
-    CONSTRAINT "registration_request_role_requested_check" CHECK (("role_requested" = ANY (ARRAY['student'::"public"."app_role", 'teacher'::"public"."app_role"]))),
-    CONSTRAINT "registration_request_specialization_check" CHECK ((("specialization" IS NULL) OR (("length"(TRIM(BOTH FROM "specialization")) >= 2) AND ("length"(TRIM(BOTH FROM "specialization")) <= 200)))),
-    CONSTRAINT "registration_request_verification_token_check" CHECK ((("verification_token" IS NULL) OR ("length"("verification_token") = 64))),
-    CONSTRAINT "rr_email_lowercase" CHECK (("email" = "lower"("email"))),
-    CONSTRAINT "rr_no_cross_fields" CHECK (((NOT (("role_requested" = 'student'::"public"."app_role") AND (("dept_id" IS NOT NULL) OR ("designation" IS NOT NULL)))) AND (NOT (("role_requested" = 'teacher'::"public"."app_role") AND (("program_id" IS NOT NULL) OR ("batch_year" IS NOT NULL)))))),
-    CONSTRAINT "rr_reason_only_on_reject" CHECK ((("status" = 'rejected'::"public"."request_status") OR ("rejection_reason" IS NULL))),
-    CONSTRAINT "rr_reviewed_when_decided" CHECK ((("status" = 'pending'::"public"."request_status") OR ("reviewed_at" IS NOT NULL))),
-    CONSTRAINT "rr_student_fields" CHECK ((("role_requested" <> 'student'::"public"."app_role") OR (("program_id" IS NOT NULL) AND ("batch_year" IS NOT NULL) AND ("date_of_birth" IS NOT NULL)))),
-    CONSTRAINT "rr_teacher_fields" CHECK ((("role_requested" <> 'teacher'::"public"."app_role") OR (("dept_id" IS NOT NULL) AND ("designation" IS NOT NULL)))),
-    CONSTRAINT "rr_token_expiry_paired" CHECK ((("verification_token" IS NULL) = ("token_expires_at" IS NULL)))
+    "advisor_name" character varying(120),
+    "advisor_user_id" integer,
+    CONSTRAINT "project_check" CHECK ((("is_current" = true) OR ("end_year" IS NOT NULL))),
+    CONSTRAINT "project_description_check" CHECK (("char_length"("description") <= 2000)),
+    CONSTRAINT "project_end_month_check" CHECK ((("end_month" >= 1) AND ("end_month" <= 12))),
+    CONSTRAINT "project_end_year_check" CHECK ((("end_year" >= 2000) AND ("end_year" <= 2100))),
+    CONSTRAINT "project_start_month_check" CHECK ((("start_month" >= 1) AND ("start_month" <= 12))),
+    CONSTRAINT "project_start_year_check" CHECK ((("start_year" >= 2000) AND ("start_year" <= 2100)))
 );
 
 
-ALTER TABLE "public"."registration_request" OWNER TO "postgres";
+ALTER TABLE "public"."project" OWNER TO "postgres";
 
 
-CREATE SEQUENCE IF NOT EXISTS "public"."registration_request_request_id_seq"
+COMMENT ON COLUMN "public"."project"."advisor_name" IS 'External advisor name (not in system). Use this OR advisor_user_id, not both.';
+
+
+
+COMMENT ON COLUMN "public"."project"."advisor_user_id" IS 'Internal advisor — references instructor table.';
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."project_contributor" (
+    "contrib_id" integer NOT NULL,
+    "project_id" integer NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "role" character varying(100),
+    "added_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."project_contributor" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."project_contributor_contrib_id_seq"
     AS integer
     START WITH 1
     INCREMENT BY 1
@@ -1042,10 +1609,208 @@ CREATE SEQUENCE IF NOT EXISTS "public"."registration_request_request_id_seq"
     CACHE 1;
 
 
-ALTER SEQUENCE "public"."registration_request_request_id_seq" OWNER TO "postgres";
+ALTER SEQUENCE "public"."project_contributor_contrib_id_seq" OWNER TO "postgres";
 
 
-ALTER SEQUENCE "public"."registration_request_request_id_seq" OWNED BY "public"."registration_request"."request_id";
+ALTER SEQUENCE "public"."project_contributor_contrib_id_seq" OWNED BY "public"."project_contributor"."contrib_id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."project_media" (
+    "media_id" integer NOT NULL,
+    "project_id" integer NOT NULL,
+    "file_url" character varying(500) NOT NULL,
+    "file_name" character varying(255) NOT NULL,
+    "file_type" character varying(50) NOT NULL,
+    "file_size_bytes" bigint NOT NULL,
+    "mime_type" character varying(100),
+    "uploaded_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "project_media_file_size_bytes_check" CHECK ((("file_size_bytes" > 0) AND ("file_size_bytes" <= 52428800))),
+    CONSTRAINT "project_media_file_type_check" CHECK ((("file_type")::"text" = ANY ((ARRAY['image'::character varying, 'video'::character varying, 'audio'::character varying, 'document'::character varying, 'presentation'::character varying, 'site'::character varying, 'other'::character varying])::"text"[])))
+);
+
+
+ALTER TABLE "public"."project_media" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."project_media_media_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."project_media_media_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."project_media_media_id_seq" OWNED BY "public"."project_media"."media_id";
+
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."project_project_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."project_project_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."project_project_id_seq" OWNED BY "public"."project"."project_id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."project_skill" (
+    "project_id" integer NOT NULL,
+    "skill_id" integer NOT NULL
+);
+
+
+ALTER TABLE "public"."project_skill" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."research_paper" (
+    "paper_id" integer NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "title" character varying(500) NOT NULL,
+    "abstract" "text",
+    "journal_name" character varying(300),
+    "conference_name" character varying(300),
+    "doi" character varying(255),
+    "paper_url" character varying(500),
+    "scholar_url" character varying(500),
+    "publish_month" smallint,
+    "publish_year" smallint,
+    "citation_count" integer DEFAULT 0 NOT NULL,
+    "is_published" boolean DEFAULT true NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "research_paper_citation_count_check" CHECK (("citation_count" >= 0)),
+    CONSTRAINT "research_paper_publish_month_check" CHECK ((("publish_month" >= 1) AND ("publish_month" <= 12))),
+    CONSTRAINT "research_paper_publish_year_check" CHECK ((("publish_year" >= 2000) AND ("publish_year" <= 2100)))
+);
+
+
+ALTER TABLE "public"."research_paper" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."research_paper_author" (
+    "author_id" integer NOT NULL,
+    "paper_id" integer NOT NULL,
+    "user_id" "uuid",
+    "author_name" character varying(120) NOT NULL,
+    "author_order" smallint DEFAULT 1 NOT NULL,
+    "is_corresponding" boolean DEFAULT false NOT NULL,
+    CONSTRAINT "research_paper_author_author_order_check" CHECK (("author_order" > 0))
+);
+
+
+ALTER TABLE "public"."research_paper_author" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."research_paper_author_author_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."research_paper_author_author_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."research_paper_author_author_id_seq" OWNED BY "public"."research_paper_author"."author_id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."research_paper_keyword" (
+    "paper_id" integer NOT NULL,
+    "skill_id" integer NOT NULL
+);
+
+
+ALTER TABLE "public"."research_paper_keyword" OWNER TO "postgres";
+
+
+CREATE TABLE IF NOT EXISTS "public"."research_paper_media" (
+    "media_id" integer NOT NULL,
+    "paper_id" integer NOT NULL,
+    "file_url" character varying(500) NOT NULL,
+    "file_name" character varying(255) NOT NULL,
+    "file_type" character varying(50) NOT NULL,
+    "file_size_bytes" bigint NOT NULL,
+    "mime_type" character varying(100),
+    "uploaded_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "research_paper_media_file_size_bytes_check" CHECK ((("file_size_bytes" > 0) AND ("file_size_bytes" <= 52428800))),
+    CONSTRAINT "research_paper_media_file_type_check" CHECK ((("file_type")::"text" = ANY ((ARRAY['image'::character varying, 'video'::character varying, 'audio'::character varying, 'document'::character varying, 'presentation'::character varying, 'site'::character varying, 'other'::character varying])::"text"[])))
+);
+
+
+ALTER TABLE "public"."research_paper_media" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."research_paper_media_media_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."research_paper_media_media_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."research_paper_media_media_id_seq" OWNED BY "public"."research_paper_media"."media_id";
+
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."research_paper_paper_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."research_paper_paper_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."research_paper_paper_id_seq" OWNED BY "public"."research_paper"."paper_id";
+
+
+
+CREATE TABLE IF NOT EXISTS "public"."skill" (
+    "skill_id" integer NOT NULL,
+    "skill_name" character varying(100) NOT NULL,
+    "category" character varying(50),
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+);
+
+
+ALTER TABLE "public"."skill" OWNER TO "postgres";
+
+
+CREATE SEQUENCE IF NOT EXISTS "public"."skill_skill_id_seq"
+    AS integer
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+ALTER SEQUENCE "public"."skill_skill_id_seq" OWNER TO "postgres";
+
+
+ALTER SEQUENCE "public"."skill_skill_id_seq" OWNED BY "public"."skill"."skill_id";
 
 
 
@@ -1200,47 +1965,55 @@ CREATE OR REPLACE VIEW "public"."v_notice_board_posts" AS
 ALTER VIEW "public"."v_notice_board_posts" OWNER TO "postgres";
 
 
-CREATE OR REPLACE VIEW "public"."v_pending_requests" AS
- SELECT "r"."request_id",
-    "r"."role_requested",
-    "r"."email",
-    (("r"."first_name" || ' '::"text") || "r"."last_name") AS "full_name",
-    "r"."phone",
-    "r"."gender",
-    "r"."date_of_birth",
-    "r"."email_verified",
-    "prog"."program_name",
-    "d"."dept_name",
-    "r"."designation",
-    "r"."batch_year",
-    "r"."submitted_at",
-    ("now"() - "r"."submitted_at") AS "waiting_for"
-   FROM (("public"."registration_request" "r"
-     LEFT JOIN "public"."program" "prog" ON (("prog"."program_id" = "r"."program_id")))
-     LEFT JOIN "public"."department" "d" ON (("d"."dept_id" = "r"."dept_id")))
-  WHERE ("r"."status" = 'pending'::"public"."request_status")
-  ORDER BY "r"."email_verified" DESC, "r"."submitted_at";
+ALTER TABLE ONLY "public"."achievement_comment" ALTER COLUMN "comment_id" SET DEFAULT "nextval"('"public"."achievement_comment_comment_id_seq"'::"regclass");
 
 
-ALTER VIEW "public"."v_pending_requests" OWNER TO "postgres";
+
+ALTER TABLE ONLY "public"."achievement_rating" ALTER COLUMN "rating_id" SET DEFAULT "nextval"('"public"."achievement_rating_rating_id_seq"'::"regclass");
 
 
-CREATE OR REPLACE VIEW "public"."v_suspicious_logins" AS
- SELECT "ip_address",
-    "count"(*) AS "failed_count",
-    "max"("attempted_at") AS "last_seen",
-    "array_agg"(DISTINCT "email") AS "emails_tried"
-   FROM "public"."login_attempt"
-  WHERE (("success" = false) AND ("attempted_at" > ("now"() - '00:15:00'::interval)) AND ("ip_address" IS NOT NULL))
-  GROUP BY "ip_address"
- HAVING ("count"(*) >= 5)
-  ORDER BY ("count"(*)) DESC;
+
+ALTER TABLE ONLY "public"."achievement_reaction" ALTER COLUMN "reaction_id" SET DEFAULT "nextval"('"public"."achievement_reaction_reaction_id_seq"'::"regclass");
 
 
-ALTER VIEW "public"."v_suspicious_logins" OWNER TO "postgres";
+
+ALTER TABLE ONLY "public"."attendance_record" ALTER COLUMN "record_id" SET DEFAULT "nextval"('"public"."attendance_record_record_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."attendance_session" ALTER COLUMN "session_id" SET DEFAULT "nextval"('"public"."attendance_session_session_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."certificate" ALTER COLUMN "certificate_id" SET DEFAULT "nextval"('"public"."certificate_certificate_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."certificate_media" ALTER COLUMN "media_id" SET DEFAULT "nextval"('"public"."certificate_media_media_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."cgpa_record" ALTER COLUMN "record_id" SET DEFAULT "nextval"('"public"."cgpa_record_record_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."course_invite" ALTER COLUMN "invite_id" SET DEFAULT "nextval"('"public"."course_invite_invite_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."course_resource" ALTER COLUMN "resource_id" SET DEFAULT "nextval"('"public"."course_resource_resource_id_seq"'::"regclass");
+
 
 
 ALTER TABLE ONLY "public"."department" ALTER COLUMN "dept_id" SET DEFAULT "nextval"('"public"."department_dept_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."exam" ALTER COLUMN "exam_id" SET DEFAULT "nextval"('"public"."exam_exam_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."exam_mark" ALTER COLUMN "mark_id" SET DEFAULT "nextval"('"public"."exam_mark_mark_id_seq"'::"regclass");
 
 
 
@@ -1248,7 +2021,15 @@ ALTER TABLE ONLY "public"."instructor" ALTER COLUMN "instructor_id" SET DEFAULT 
 
 
 
-ALTER TABLE ONLY "public"."login_attempt" ALTER COLUMN "attempt_id" SET DEFAULT "nextval"('"public"."login_attempt_attempt_id_seq"'::"regclass");
+ALTER TABLE ONLY "public"."manual_course" ALTER COLUMN "manual_course_id" SET DEFAULT "nextval"('"public"."manual_course_manual_course_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."manual_enrollment" ALTER COLUMN "enrollment_id" SET DEFAULT "nextval"('"public"."manual_enrollment_enrollment_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."notification" ALTER COLUMN "notification_id" SET DEFAULT "nextval"('"public"."notification_notification_id_seq"'::"regclass");
 
 
 
@@ -1256,11 +2037,165 @@ ALTER TABLE ONLY "public"."program" ALTER COLUMN "program_id" SET DEFAULT "nextv
 
 
 
-ALTER TABLE ONLY "public"."registration_request" ALTER COLUMN "request_id" SET DEFAULT "nextval"('"public"."registration_request_request_id_seq"'::"regclass");
+ALTER TABLE ONLY "public"."project" ALTER COLUMN "project_id" SET DEFAULT "nextval"('"public"."project_project_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."project_contributor" ALTER COLUMN "contrib_id" SET DEFAULT "nextval"('"public"."project_contributor_contrib_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."project_media" ALTER COLUMN "media_id" SET DEFAULT "nextval"('"public"."project_media_media_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."research_paper" ALTER COLUMN "paper_id" SET DEFAULT "nextval"('"public"."research_paper_paper_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."research_paper_author" ALTER COLUMN "author_id" SET DEFAULT "nextval"('"public"."research_paper_author_author_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."research_paper_media" ALTER COLUMN "media_id" SET DEFAULT "nextval"('"public"."research_paper_media_media_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."skill" ALTER COLUMN "skill_id" SET DEFAULT "nextval"('"public"."skill_skill_id_seq"'::"regclass");
 
 
 
 ALTER TABLE ONLY "public"."student" ALTER COLUMN "student_id" SET DEFAULT "nextval"('"public"."student_student_id_seq"'::"regclass");
+
+
+
+ALTER TABLE ONLY "public"."achievement_comment"
+    ADD CONSTRAINT "achievement_comment_pkey" PRIMARY KEY ("comment_id");
+
+
+
+ALTER TABLE ONLY "public"."achievement_rating"
+    ADD CONSTRAINT "achievement_rating_pkey" PRIMARY KEY ("rating_id");
+
+
+
+ALTER TABLE ONLY "public"."achievement_rating"
+    ADD CONSTRAINT "achievement_rating_user_id_achievement_type_target_id_key" UNIQUE ("user_id", "achievement_type", "target_id");
+
+
+
+ALTER TABLE ONLY "public"."achievement_reaction"
+    ADD CONSTRAINT "achievement_reaction_pkey" PRIMARY KEY ("reaction_id");
+
+
+
+ALTER TABLE ONLY "public"."achievement_reaction"
+    ADD CONSTRAINT "achievement_reaction_user_id_achievement_type_target_id_emo_key" UNIQUE ("user_id", "achievement_type", "target_id", "emoji");
+
+
+
+ALTER TABLE ONLY "public"."advisor"
+    ADD CONSTRAINT "advisor_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."advisor"
+    ADD CONSTRAINT "advisor_student_unique" UNIQUE ("student_id");
+
+
+
+ALTER TABLE ONLY "public"."attendance_record"
+    ADD CONSTRAINT "attendance_record_pkey" PRIMARY KEY ("record_id");
+
+
+
+ALTER TABLE ONLY "public"."attendance_record"
+    ADD CONSTRAINT "attendance_record_session_id_student_id_key" UNIQUE ("session_id", "student_id");
+
+
+
+ALTER TABLE ONLY "public"."attendance_session"
+    ADD CONSTRAINT "attendance_session_pkey" PRIMARY KEY ("session_id");
+
+
+
+ALTER TABLE ONLY "public"."certificate_media"
+    ADD CONSTRAINT "certificate_media_pkey" PRIMARY KEY ("media_id");
+
+
+
+ALTER TABLE ONLY "public"."certificate"
+    ADD CONSTRAINT "certificate_pkey" PRIMARY KEY ("certificate_id");
+
+
+
+ALTER TABLE ONLY "public"."certificate_skill"
+    ADD CONSTRAINT "certificate_skill_pkey" PRIMARY KEY ("certificate_id", "skill_id");
+
+
+
+ALTER TABLE ONLY "public"."cgpa_record"
+    ADD CONSTRAINT "cgpa_record_pkey" PRIMARY KEY ("record_id");
+
+
+
+ALTER TABLE ONLY "public"."chat_message_attachment"
+    ADD CONSTRAINT "chat_message_attachment_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."chat_message"
+    ADD CONSTRAINT "chat_message_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."chat_message_reaction"
+    ADD CONSTRAINT "chat_message_reaction_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."chat_message_reaction"
+    ADD CONSTRAINT "chat_message_reaction_unique" UNIQUE ("message_id", "user_id", "reaction");
+
+
+
+ALTER TABLE ONLY "public"."chat_request"
+    ADD CONSTRAINT "chat_request_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."chat_request"
+    ADD CONSTRAINT "chat_request_unique" UNIQUE ("from_id", "to_id");
+
+
+
+ALTER TABLE ONLY "public"."chat_room_member"
+    ADD CONSTRAINT "chat_room_member_pkey" PRIMARY KEY ("room_id", "profile_id");
+
+
+
+ALTER TABLE ONLY "public"."chat_room"
+    ADD CONSTRAINT "chat_room_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."chat_room"
+    ADD CONSTRAINT "chat_room_room_code_key" UNIQUE ("room_code");
+
+
+
+ALTER TABLE ONLY "public"."course_invite"
+    ADD CONSTRAINT "course_invite_manual_course_id_student_id_key" UNIQUE ("manual_course_id", "student_id");
+
+
+
+ALTER TABLE ONLY "public"."course_invite"
+    ADD CONSTRAINT "course_invite_pkey" PRIMARY KEY ("invite_id");
+
+
+
+ALTER TABLE ONLY "public"."course_resource"
+    ADD CONSTRAINT "course_resource_pkey" PRIMARY KEY ("resource_id");
 
 
 
@@ -1279,6 +2214,21 @@ ALTER TABLE ONLY "public"."department"
 
 
 
+ALTER TABLE ONLY "public"."exam_mark"
+    ADD CONSTRAINT "exam_mark_exam_id_student_id_key" UNIQUE ("exam_id", "student_id");
+
+
+
+ALTER TABLE ONLY "public"."exam_mark"
+    ADD CONSTRAINT "exam_mark_pkey" PRIMARY KEY ("mark_id");
+
+
+
+ALTER TABLE ONLY "public"."exam"
+    ADD CONSTRAINT "exam_pkey" PRIMARY KEY ("exam_id");
+
+
+
 ALTER TABLE ONLY "public"."instructor"
     ADD CONSTRAINT "instructor_employee_id_key" UNIQUE ("employee_id");
 
@@ -1294,8 +2244,23 @@ ALTER TABLE ONLY "public"."instructor"
 
 
 
-ALTER TABLE ONLY "public"."login_attempt"
-    ADD CONSTRAINT "login_attempt_pkey" PRIMARY KEY ("attempt_id");
+ALTER TABLE ONLY "public"."manual_course"
+    ADD CONSTRAINT "manual_course_enroll_code_key" UNIQUE ("enroll_code");
+
+
+
+ALTER TABLE ONLY "public"."manual_course"
+    ADD CONSTRAINT "manual_course_pkey" PRIMARY KEY ("manual_course_id");
+
+
+
+ALTER TABLE ONLY "public"."manual_enrollment"
+    ADD CONSTRAINT "manual_enrollment_manual_course_id_student_id_key" UNIQUE ("manual_course_id", "student_id");
+
+
+
+ALTER TABLE ONLY "public"."manual_enrollment"
+    ADD CONSTRAINT "manual_enrollment_pkey" PRIMARY KEY ("enrollment_id");
 
 
 
@@ -1344,6 +2309,11 @@ ALTER TABLE ONLY "public"."notice_board_reaction"
 
 
 
+ALTER TABLE ONLY "public"."notification"
+    ADD CONSTRAINT "notification_pkey" PRIMARY KEY ("notification_id");
+
+
+
 ALTER TABLE ONLY "public"."profiles"
     ADD CONSTRAINT "profiles_instructor_id_key" UNIQUE ("instructor_id");
 
@@ -1374,13 +2344,68 @@ ALTER TABLE ONLY "public"."program"
 
 
 
-ALTER TABLE ONLY "public"."registration_request"
-    ADD CONSTRAINT "registration_request_pkey" PRIMARY KEY ("request_id");
+ALTER TABLE ONLY "public"."project_contributor"
+    ADD CONSTRAINT "project_contributor_pkey" PRIMARY KEY ("contrib_id");
 
 
 
-ALTER TABLE ONLY "public"."registration_request"
-    ADD CONSTRAINT "registration_request_verification_token_key" UNIQUE ("verification_token");
+ALTER TABLE ONLY "public"."project_contributor"
+    ADD CONSTRAINT "project_contributor_project_id_user_id_key" UNIQUE ("project_id", "user_id");
+
+
+
+ALTER TABLE ONLY "public"."project_media"
+    ADD CONSTRAINT "project_media_pkey" PRIMARY KEY ("media_id");
+
+
+
+ALTER TABLE ONLY "public"."project"
+    ADD CONSTRAINT "project_pkey" PRIMARY KEY ("project_id");
+
+
+
+ALTER TABLE ONLY "public"."project_skill"
+    ADD CONSTRAINT "project_skill_pkey" PRIMARY KEY ("project_id", "skill_id");
+
+
+
+ALTER TABLE ONLY "public"."research_paper_author"
+    ADD CONSTRAINT "research_paper_author_paper_id_author_order_key" UNIQUE ("paper_id", "author_order");
+
+
+
+ALTER TABLE ONLY "public"."research_paper_author"
+    ADD CONSTRAINT "research_paper_author_pkey" PRIMARY KEY ("author_id");
+
+
+
+ALTER TABLE ONLY "public"."research_paper"
+    ADD CONSTRAINT "research_paper_doi_key" UNIQUE ("doi");
+
+
+
+ALTER TABLE ONLY "public"."research_paper_keyword"
+    ADD CONSTRAINT "research_paper_keyword_pkey" PRIMARY KEY ("paper_id", "skill_id");
+
+
+
+ALTER TABLE ONLY "public"."research_paper_media"
+    ADD CONSTRAINT "research_paper_media_pkey" PRIMARY KEY ("media_id");
+
+
+
+ALTER TABLE ONLY "public"."research_paper"
+    ADD CONSTRAINT "research_paper_pkey" PRIMARY KEY ("paper_id");
+
+
+
+ALTER TABLE ONLY "public"."skill"
+    ADD CONSTRAINT "skill_pkey" PRIMARY KEY ("skill_id");
+
+
+
+ALTER TABLE ONLY "public"."skill"
+    ADD CONSTRAINT "skill_skill_name_key" UNIQUE ("skill_name");
 
 
 
@@ -1399,11 +2424,99 @@ ALTER TABLE ONLY "public"."student"
 
 
 
+CREATE INDEX "chat_message_room_created_idx" ON "public"."chat_message" USING "btree" ("room_id", "created_at" DESC);
+
+
+
+CREATE INDEX "idx_achievement_comment_target" ON "public"."achievement_comment" USING "btree" ("achievement_type", "target_id");
+
+
+
+CREATE INDEX "idx_achievement_rating_target" ON "public"."achievement_rating" USING "btree" ("achievement_type", "target_id");
+
+
+
+CREATE INDEX "idx_achievement_reaction_target" ON "public"."achievement_reaction" USING "btree" ("achievement_type", "target_id");
+
+
+
+CREATE INDEX "idx_attendance_record_session" ON "public"."attendance_record" USING "btree" ("session_id");
+
+
+
+CREATE INDEX "idx_attendance_record_student" ON "public"."attendance_record" USING "btree" ("student_id");
+
+
+
+CREATE INDEX "idx_attendance_session_course" ON "public"."attendance_session" USING "btree" ("manual_course_id");
+
+
+
+CREATE INDEX "idx_attendance_session_date" ON "public"."attendance_session" USING "btree" ("session_date");
+
+
+
+CREATE INDEX "idx_certificate_published" ON "public"."certificate" USING "btree" ("is_published", "created_at" DESC);
+
+
+
+CREATE INDEX "idx_certificate_user" ON "public"."certificate" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_cgpa_record_student" ON "public"."cgpa_record" USING "btree" ("student_id");
+
+
+
+CREATE INDEX "idx_exam_course" ON "public"."exam" USING "btree" ("manual_course_id");
+
+
+
+CREATE INDEX "idx_exam_created_by" ON "public"."exam" USING "btree" ("created_by");
+
+
+
+CREATE INDEX "idx_exam_mark_exam" ON "public"."exam_mark" USING "btree" ("exam_id");
+
+
+
+CREATE INDEX "idx_exam_mark_student" ON "public"."exam_mark" USING "btree" ("student_id");
+
+
+
 CREATE INDEX "idx_instructor_dept" ON "public"."instructor" USING "btree" ("dept_id");
 
 
 
-CREATE INDEX "idx_la_ip_failures" ON "public"."login_attempt" USING "btree" ("ip_address", "attempted_at" DESC) WHERE ("success" = false);
+CREATE INDEX "idx_invite_course" ON "public"."course_invite" USING "btree" ("manual_course_id");
+
+
+
+CREATE INDEX "idx_invite_student" ON "public"."course_invite" USING "btree" ("student_id");
+
+
+
+CREATE INDEX "idx_invite_student_pending" ON "public"."course_invite" USING "btree" ("student_id", "status") WHERE (("status")::"text" = 'pending'::"text");
+
+
+
+CREATE INDEX "idx_manual_course_enroll_code" ON "public"."manual_course" USING "btree" ("enroll_code");
+
+
+
+CREATE INDEX "idx_manual_course_instructor" ON "public"."manual_course" USING "btree" ("instructor_id");
+
+
+
+CREATE UNIQUE INDEX "idx_manual_course_join_token" ON "public"."manual_course" USING "btree" ("join_link_token");
+
+
+
+CREATE INDEX "idx_manual_enrollment_course" ON "public"."manual_enrollment" USING "btree" ("manual_course_id");
+
+
+
+CREATE INDEX "idx_manual_enrollment_student" ON "public"."manual_enrollment" USING "btree" ("student_id");
 
 
 
@@ -1435,6 +2548,14 @@ CREATE INDEX "idx_nbr_user" ON "public"."notice_board_reaction" USING "btree" ("
 
 
 
+CREATE INDEX "idx_notification_recipient" ON "public"."notification" USING "btree" ("recipient_id", "created_at" DESC);
+
+
+
+CREATE INDEX "idx_notification_unread" ON "public"."notification" USING "btree" ("recipient_id", "is_read") WHERE ("is_read" = false);
+
+
+
 CREATE INDEX "idx_profiles_active" ON "public"."profiles" USING "btree" ("is_active");
 
 
@@ -1451,15 +2572,31 @@ CREATE INDEX "idx_profiles_student" ON "public"."profiles" USING "btree" ("stude
 
 
 
-CREATE UNIQUE INDEX "idx_rr_email_pending" ON "public"."registration_request" USING "btree" ("email") WHERE ("status" = 'pending'::"public"."request_status");
+CREATE INDEX "idx_project_published" ON "public"."project" USING "btree" ("is_published", "created_at" DESC);
 
 
 
-CREATE INDEX "idx_rr_status" ON "public"."registration_request" USING "btree" ("status");
+CREATE INDEX "idx_project_user" ON "public"."project" USING "btree" ("user_id");
 
 
 
-CREATE INDEX "idx_rr_submitted" ON "public"."registration_request" USING "btree" ("submitted_at" DESC);
+CREATE INDEX "idx_research_paper_published" ON "public"."research_paper" USING "btree" ("is_published", "created_at" DESC);
+
+
+
+CREATE INDEX "idx_research_paper_user" ON "public"."research_paper" USING "btree" ("user_id");
+
+
+
+CREATE INDEX "idx_resource_course" ON "public"."course_resource" USING "btree" ("manual_course_id");
+
+
+
+CREATE INDEX "idx_resource_published" ON "public"."course_resource" USING "btree" ("manual_course_id", "is_published");
+
+
+
+CREATE INDEX "idx_resource_type" ON "public"."course_resource" USING "btree" ("resource_type");
 
 
 
@@ -1472,6 +2609,22 @@ CREATE INDEX "idx_student_program" ON "public"."student" USING "btree" ("program
 
 
 CREATE INDEX "idx_student_roll" ON "public"."student" USING "btree" ("student_roll");
+
+
+
+CREATE OR REPLACE TRIGGER "trg_achievement_comment_updated_at" BEFORE UPDATE ON "public"."achievement_comment" FOR EACH ROW EXECUTE FUNCTION "public"."set_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "trg_certificate_updated_at" BEFORE UPDATE ON "public"."certificate" FOR EACH ROW EXECUTE FUNCTION "public"."set_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "trg_exam_mark_updated_at" BEFORE UPDATE ON "public"."exam_mark" FOR EACH ROW EXECUTE FUNCTION "public"."set_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "trg_exam_updated_at" BEFORE UPDATE ON "public"."exam" FOR EACH ROW EXECUTE FUNCTION "public"."set_updated_at"();
 
 
 
@@ -1491,6 +2644,10 @@ CREATE OR REPLACE TRIGGER "trg_instructor_updated" BEFORE UPDATE ON "public"."in
 
 
 
+CREATE OR REPLACE TRIGGER "trg_manual_course_updated_at" BEFORE UPDATE ON "public"."manual_course" FOR EACH ROW EXECUTE FUNCTION "public"."set_updated_at"();
+
+
+
 CREATE OR REPLACE TRIGGER "trg_nbp_updated_at" BEFORE UPDATE ON "public"."notice_board_post" FOR EACH ROW EXECUTE FUNCTION "public"."update_notice_board_post_updated_at"();
 
 
@@ -1503,11 +2660,15 @@ CREATE OR REPLACE TRIGGER "trg_profiles_updated" BEFORE UPDATE ON "public"."prof
 
 
 
-CREATE OR REPLACE TRIGGER "trg_rr_phone" BEFORE INSERT OR UPDATE OF "phone" ON "public"."registration_request" FOR EACH ROW EXECUTE FUNCTION "public"."normalise_phone_field"();
+CREATE OR REPLACE TRIGGER "trg_project_updated_at" BEFORE UPDATE ON "public"."project" FOR EACH ROW EXECUTE FUNCTION "public"."set_updated_at"();
 
 
 
-CREATE OR REPLACE TRIGGER "trg_rr_updated" BEFORE UPDATE ON "public"."registration_request" FOR EACH ROW EXECUTE FUNCTION "public"."set_updated_at"();
+CREATE OR REPLACE TRIGGER "trg_research_paper_updated_at" BEFORE UPDATE ON "public"."research_paper" FOR EACH ROW EXECUTE FUNCTION "public"."set_updated_at"();
+
+
+
+CREATE OR REPLACE TRIGGER "trg_resource_updated_at" BEFORE UPDATE ON "public"."course_resource" FOR EACH ROW EXECUTE FUNCTION "public"."set_updated_at"();
 
 
 
@@ -1535,6 +2696,186 @@ CREATE OR REPLACE TRIGGER "trg_student_updated" BEFORE UPDATE ON "public"."stude
 
 
 
+ALTER TABLE ONLY "public"."achievement_comment"
+    ADD CONSTRAINT "achievement_comment_parent_comment_id_fkey" FOREIGN KEY ("parent_comment_id") REFERENCES "public"."achievement_comment"("comment_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."achievement_comment"
+    ADD CONSTRAINT "achievement_comment_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."achievement_rating"
+    ADD CONSTRAINT "achievement_rating_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."achievement_reaction"
+    ADD CONSTRAINT "achievement_reaction_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."advisor"
+    ADD CONSTRAINT "advisor_advisor_instructor_id_fkey" FOREIGN KEY ("advisor_instructor_id") REFERENCES "public"."instructor"("instructor_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."advisor"
+    ADD CONSTRAINT "advisor_student_id_fkey" FOREIGN KEY ("student_id") REFERENCES "public"."student"("student_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."attendance_record"
+    ADD CONSTRAINT "attendance_record_session_id_fkey" FOREIGN KEY ("session_id") REFERENCES "public"."attendance_session"("session_id") ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."attendance_record"
+    ADD CONSTRAINT "attendance_record_student_id_fkey" FOREIGN KEY ("student_id") REFERENCES "public"."student"("student_id") ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."attendance_session"
+    ADD CONSTRAINT "attendance_session_instructor_id_fkey" FOREIGN KEY ("instructor_id") REFERENCES "public"."instructor"("instructor_id") ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."attendance_session"
+    ADD CONSTRAINT "attendance_session_manual_course_id_fkey" FOREIGN KEY ("manual_course_id") REFERENCES "public"."manual_course"("manual_course_id") ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."certificate_media"
+    ADD CONSTRAINT "certificate_media_certificate_id_fkey" FOREIGN KEY ("certificate_id") REFERENCES "public"."certificate"("certificate_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."certificate_skill"
+    ADD CONSTRAINT "certificate_skill_certificate_id_fkey" FOREIGN KEY ("certificate_id") REFERENCES "public"."certificate"("certificate_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."certificate_skill"
+    ADD CONSTRAINT "certificate_skill_skill_id_fkey" FOREIGN KEY ("skill_id") REFERENCES "public"."skill"("skill_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."certificate"
+    ADD CONSTRAINT "certificate_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."cgpa_record"
+    ADD CONSTRAINT "cgpa_record_student_id_fkey" FOREIGN KEY ("student_id") REFERENCES "public"."student"("student_id") ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."chat_message_attachment"
+    ADD CONSTRAINT "chat_message_attachment_message_id_fkey" FOREIGN KEY ("message_id") REFERENCES "public"."chat_message"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."chat_message_reaction"
+    ADD CONSTRAINT "chat_message_reaction_message_id_fkey" FOREIGN KEY ("message_id") REFERENCES "public"."chat_message"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."chat_message_reaction"
+    ADD CONSTRAINT "chat_message_reaction_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."profiles"("id");
+
+
+
+ALTER TABLE ONLY "public"."chat_message"
+    ADD CONSTRAINT "chat_message_reply_to_fkey" FOREIGN KEY ("reply_to") REFERENCES "public"."chat_message"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."chat_message"
+    ADD CONSTRAINT "chat_message_room_id_fkey" FOREIGN KEY ("room_id") REFERENCES "public"."chat_room"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."chat_message"
+    ADD CONSTRAINT "chat_message_sender_id_fkey" FOREIGN KEY ("sender_id") REFERENCES "public"."profiles"("id");
+
+
+
+ALTER TABLE ONLY "public"."chat_request"
+    ADD CONSTRAINT "chat_request_from_id_fkey" FOREIGN KEY ("from_id") REFERENCES "public"."profiles"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."chat_request"
+    ADD CONSTRAINT "chat_request_to_id_fkey" FOREIGN KEY ("to_id") REFERENCES "public"."profiles"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."chat_room"
+    ADD CONSTRAINT "chat_room_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "public"."profiles"("id") ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."chat_room_member"
+    ADD CONSTRAINT "chat_room_member_profile_id_fkey" FOREIGN KEY ("profile_id") REFERENCES "public"."profiles"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."chat_room_member"
+    ADD CONSTRAINT "chat_room_member_room_id_fkey" FOREIGN KEY ("room_id") REFERENCES "public"."chat_room"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."course_invite"
+    ADD CONSTRAINT "course_invite_invited_by_fkey" FOREIGN KEY ("invited_by") REFERENCES "public"."instructor"("instructor_id") ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."course_invite"
+    ADD CONSTRAINT "course_invite_manual_course_id_fkey" FOREIGN KEY ("manual_course_id") REFERENCES "public"."manual_course"("manual_course_id") ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."course_invite"
+    ADD CONSTRAINT "course_invite_student_id_fkey" FOREIGN KEY ("student_id") REFERENCES "public"."student"("student_id") ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."course_resource"
+    ADD CONSTRAINT "course_resource_manual_course_id_fkey" FOREIGN KEY ("manual_course_id") REFERENCES "public"."manual_course"("manual_course_id") ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."course_resource"
+    ADD CONSTRAINT "course_resource_uploaded_by_fkey" FOREIGN KEY ("uploaded_by") REFERENCES "public"."instructor"("instructor_id") ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."exam"
+    ADD CONSTRAINT "exam_created_by_fkey" FOREIGN KEY ("created_by") REFERENCES "auth"."users"("id") ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."exam"
+    ADD CONSTRAINT "exam_manual_course_id_fkey" FOREIGN KEY ("manual_course_id") REFERENCES "public"."manual_course"("manual_course_id") ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."exam_mark"
+    ADD CONSTRAINT "exam_mark_entered_by_fkey" FOREIGN KEY ("entered_by") REFERENCES "auth"."users"("id") ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."exam_mark"
+    ADD CONSTRAINT "exam_mark_exam_id_fkey" FOREIGN KEY ("exam_id") REFERENCES "public"."exam"("exam_id") ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."exam_mark"
+    ADD CONSTRAINT "exam_mark_student_id_fkey" FOREIGN KEY ("student_id") REFERENCES "public"."student"("student_id") ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+
 ALTER TABLE ONLY "public"."profiles"
     ADD CONSTRAINT "fk_profiles_instructor" FOREIGN KEY ("instructor_id") REFERENCES "public"."instructor"("instructor_id") ON UPDATE CASCADE ON DELETE SET NULL;
 
@@ -1552,6 +2893,26 @@ ALTER TABLE ONLY "public"."instructor"
 
 ALTER TABLE ONLY "public"."instructor"
     ADD CONSTRAINT "instructor_profile_id_fkey" FOREIGN KEY ("profile_id") REFERENCES "public"."profiles"("id") ON UPDATE CASCADE ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."manual_course"
+    ADD CONSTRAINT "manual_course_dept_id_fkey" FOREIGN KEY ("dept_id") REFERENCES "public"."department"("dept_id") ON UPDATE CASCADE ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."manual_course"
+    ADD CONSTRAINT "manual_course_instructor_id_fkey" FOREIGN KEY ("instructor_id") REFERENCES "public"."instructor"("instructor_id") ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."manual_enrollment"
+    ADD CONSTRAINT "manual_enrollment_manual_course_id_fkey" FOREIGN KEY ("manual_course_id") REFERENCES "public"."manual_course"("manual_course_id") ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+
+ALTER TABLE ONLY "public"."manual_enrollment"
+    ADD CONSTRAINT "manual_enrollment_student_id_fkey" FOREIGN KEY ("student_id") REFERENCES "public"."student"("student_id") ON UPDATE CASCADE ON DELETE RESTRICT;
 
 
 
@@ -1600,6 +2961,16 @@ ALTER TABLE ONLY "public"."notice_board_reaction"
 
 
 
+ALTER TABLE ONLY "public"."notification"
+    ADD CONSTRAINT "notification_recipient_id_fkey" FOREIGN KEY ("recipient_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."notification"
+    ADD CONSTRAINT "notification_sender_id_fkey" FOREIGN KEY ("sender_id") REFERENCES "auth"."users"("id") ON DELETE SET NULL;
+
+
+
 ALTER TABLE ONLY "public"."profiles"
     ADD CONSTRAINT "profiles_id_fkey" FOREIGN KEY ("id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
 
@@ -1610,18 +2981,68 @@ ALTER TABLE ONLY "public"."program"
 
 
 
-ALTER TABLE ONLY "public"."registration_request"
-    ADD CONSTRAINT "registration_request_dept_id_fkey" FOREIGN KEY ("dept_id") REFERENCES "public"."department"("dept_id") ON UPDATE CASCADE ON DELETE RESTRICT;
+ALTER TABLE ONLY "public"."project"
+    ADD CONSTRAINT "project_advisor_user_id_fkey" FOREIGN KEY ("advisor_user_id") REFERENCES "public"."instructor"("instructor_id") ON UPDATE CASCADE ON DELETE SET NULL;
 
 
 
-ALTER TABLE ONLY "public"."registration_request"
-    ADD CONSTRAINT "registration_request_program_id_fkey" FOREIGN KEY ("program_id") REFERENCES "public"."program"("program_id") ON UPDATE CASCADE ON DELETE RESTRICT;
+ALTER TABLE ONLY "public"."project_contributor"
+    ADD CONSTRAINT "project_contributor_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "public"."project"("project_id") ON DELETE CASCADE;
 
 
 
-ALTER TABLE ONLY "public"."registration_request"
-    ADD CONSTRAINT "registration_request_reviewed_by_fkey" FOREIGN KEY ("reviewed_by") REFERENCES "auth"."users"("id") ON DELETE SET NULL;
+ALTER TABLE ONLY "public"."project_contributor"
+    ADD CONSTRAINT "project_contributor_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."project_media"
+    ADD CONSTRAINT "project_media_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "public"."project"("project_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."project_skill"
+    ADD CONSTRAINT "project_skill_project_id_fkey" FOREIGN KEY ("project_id") REFERENCES "public"."project"("project_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."project_skill"
+    ADD CONSTRAINT "project_skill_skill_id_fkey" FOREIGN KEY ("skill_id") REFERENCES "public"."skill"("skill_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."project"
+    ADD CONSTRAINT "project_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."research_paper_author"
+    ADD CONSTRAINT "research_paper_author_paper_id_fkey" FOREIGN KEY ("paper_id") REFERENCES "public"."research_paper"("paper_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."research_paper_author"
+    ADD CONSTRAINT "research_paper_author_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE SET NULL;
+
+
+
+ALTER TABLE ONLY "public"."research_paper_keyword"
+    ADD CONSTRAINT "research_paper_keyword_paper_id_fkey" FOREIGN KEY ("paper_id") REFERENCES "public"."research_paper"("paper_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."research_paper_keyword"
+    ADD CONSTRAINT "research_paper_keyword_skill_id_fkey" FOREIGN KEY ("skill_id") REFERENCES "public"."skill"("skill_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."research_paper_media"
+    ADD CONSTRAINT "research_paper_media_paper_id_fkey" FOREIGN KEY ("paper_id") REFERENCES "public"."research_paper"("paper_id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."research_paper"
+    ADD CONSTRAINT "research_paper_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
 
 
 
@@ -1632,6 +3053,34 @@ ALTER TABLE ONLY "public"."student"
 
 ALTER TABLE ONLY "public"."student"
     ADD CONSTRAINT "student_program_id_fkey" FOREIGN KEY ("program_id") REFERENCES "public"."program"("program_id") ON UPDATE CASCADE ON DELETE RESTRICT;
+
+
+
+ALTER TABLE "public"."achievement_comment" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."achievement_rating" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."achievement_reaction" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."advisor" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "advisor_select_own" ON "public"."advisor" FOR SELECT USING (((EXISTS ( SELECT 1
+   FROM "public"."student" "s"
+  WHERE (("s"."student_id" = "advisor"."student_id") AND ("s"."profile_id" = "auth"."uid"())))) OR (EXISTS ( SELECT 1
+   FROM "public"."instructor" "i"
+  WHERE (("i"."instructor_id" = "advisor"."advisor_instructor_id") AND ("i"."profile_id" = "auth"."uid"())))) OR ("public"."current_user_role"() = 'admin'::"text")));
+
+
+
+CREATE POLICY "ar_select" ON "public"."attendance_record" FOR SELECT TO "authenticated" USING (true);
+
+
+
+CREATE POLICY "as_select" ON "public"."attendance_session" FOR SELECT TO "authenticated" USING (true);
 
 
 
@@ -1653,10 +3102,291 @@ CREATE POLICY "attachments_select" ON "public"."notice_board_attachment" FOR SEL
 
 
 
+ALTER TABLE "public"."attendance_record" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."attendance_session" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."certificate" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "certificate_delete" ON "public"."certificate" FOR DELETE TO "authenticated" USING (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "certificate_insert" ON "public"."certificate" FOR INSERT TO "authenticated" WITH CHECK (("user_id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."certificate_media" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "certificate_media_delete" ON "public"."certificate_media" FOR DELETE TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."certificate" "c"
+  WHERE (("c"."certificate_id" = "certificate_media"."certificate_id") AND ("c"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "certificate_media_insert" ON "public"."certificate_media" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."certificate" "c"
+  WHERE (("c"."certificate_id" = "certificate_media"."certificate_id") AND ("c"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "certificate_media_select" ON "public"."certificate_media" FOR SELECT TO "authenticated" USING (true);
+
+
+
+CREATE POLICY "certificate_select" ON "public"."certificate" FOR SELECT TO "authenticated" USING ((("is_published" = true) OR ("user_id" = "auth"."uid"())));
+
+
+
+ALTER TABLE "public"."certificate_skill" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "certificate_skill_delete" ON "public"."certificate_skill" FOR DELETE TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."certificate" "c"
+  WHERE (("c"."certificate_id" = "certificate_skill"."certificate_id") AND ("c"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "certificate_skill_insert" ON "public"."certificate_skill" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."certificate" "c"
+  WHERE (("c"."certificate_id" = "certificate_skill"."certificate_id") AND ("c"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "certificate_skill_select" ON "public"."certificate_skill" FOR SELECT TO "authenticated" USING (true);
+
+
+
+CREATE POLICY "certificate_update" ON "public"."certificate" FOR UPDATE TO "authenticated" USING (("user_id" = "auth"."uid"())) WITH CHECK (("user_id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."cgpa_record" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "cgpa_select" ON "public"."cgpa_record" FOR SELECT TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."student" "s"
+  WHERE (("s"."student_id" = "cgpa_record"."student_id") AND ("s"."profile_id" = "auth"."uid"())))));
+
+
+
+ALTER TABLE "public"."chat_message" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."chat_message_attachment" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "chat_message_attachment_delete" ON "public"."chat_message_attachment" FOR DELETE USING ((EXISTS ( SELECT 1
+   FROM "public"."chat_message" "m"
+  WHERE (("m"."id" = "chat_message_attachment"."message_id") AND ("m"."sender_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "chat_message_attachment_insert" ON "public"."chat_message_attachment" FOR INSERT WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."chat_message" "m"
+  WHERE (("m"."id" = "chat_message_attachment"."message_id") AND "public"."is_room_member"("m"."room_id") AND ("m"."sender_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "chat_message_attachment_select" ON "public"."chat_message_attachment" FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM "public"."chat_message" "m"
+  WHERE (("m"."id" = "chat_message_attachment"."message_id") AND "public"."is_room_member"("m"."room_id")))));
+
+
+
+CREATE POLICY "chat_message_delete_own" ON "public"."chat_message" FOR DELETE USING (("sender_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "chat_message_insert_member" ON "public"."chat_message" FOR INSERT WITH CHECK (("public"."is_room_member"("room_id") AND ("sender_id" = "auth"."uid"())));
+
+
+
+ALTER TABLE "public"."chat_message_reaction" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "chat_message_reaction_delete_own" ON "public"."chat_message_reaction" FOR DELETE USING (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "chat_message_reaction_insert" ON "public"."chat_message_reaction" FOR INSERT WITH CHECK ((("user_id" = "auth"."uid"()) AND (EXISTS ( SELECT 1
+   FROM "public"."chat_message" "m"
+  WHERE (("m"."id" = "chat_message_reaction"."message_id") AND "public"."is_room_member"("m"."room_id"))))));
+
+
+
+CREATE POLICY "chat_message_reaction_select" ON "public"."chat_message_reaction" FOR SELECT USING ((EXISTS ( SELECT 1
+   FROM "public"."chat_message" "m"
+  WHERE (("m"."id" = "chat_message_reaction"."message_id") AND "public"."is_room_member"("m"."room_id")))));
+
+
+
+CREATE POLICY "chat_message_select_member" ON "public"."chat_message" FOR SELECT USING ("public"."is_room_member"("room_id"));
+
+
+
+CREATE POLICY "chat_message_update_own" ON "public"."chat_message" FOR UPDATE USING (("sender_id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."chat_request" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "chat_request_delete" ON "public"."chat_request" FOR DELETE USING ((("from_id" = "auth"."uid"()) OR ("to_id" = "auth"."uid"())));
+
+
+
+CREATE POLICY "chat_request_insert" ON "public"."chat_request" FOR INSERT WITH CHECK (("from_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "chat_request_select" ON "public"."chat_request" FOR SELECT USING ((("from_id" = "auth"."uid"()) OR ("to_id" = "auth"."uid"())));
+
+
+
+CREATE POLICY "chat_request_update" ON "public"."chat_request" FOR UPDATE USING (("to_id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."chat_room" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "chat_room_insert_auth" ON "public"."chat_room" FOR INSERT WITH CHECK (("auth"."uid"() = "created_by"));
+
+
+
+ALTER TABLE "public"."chat_room_member" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "chat_room_member_delete_owner" ON "public"."chat_room_member" FOR DELETE USING ((("profile_id" = "auth"."uid"()) OR (EXISTS ( SELECT 1
+   FROM "public"."chat_room_member" "m"
+  WHERE (("m"."room_id" = "chat_room_member"."room_id") AND ("m"."profile_id" = "auth"."uid"()) AND ("m"."member_role" = 'owner'::"text"))))));
+
+
+
+CREATE POLICY "chat_room_member_insert_self" ON "public"."chat_room_member" FOR INSERT WITH CHECK (("profile_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "chat_room_member_select" ON "public"."chat_room_member" FOR SELECT USING ("public"."is_room_member"("room_id"));
+
+
+
+CREATE POLICY "chat_room_select_member" ON "public"."chat_room" FOR SELECT USING ("public"."is_room_member"("id"));
+
+
+
+CREATE POLICY "ci_insert" ON "public"."course_invite" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."instructor" "i"
+  WHERE (("i"."instructor_id" = "course_invite"."invited_by") AND ("i"."profile_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "ci_select" ON "public"."course_invite" FOR SELECT TO "authenticated" USING (((EXISTS ( SELECT 1
+   FROM "public"."student" "s"
+  WHERE (("s"."student_id" = "course_invite"."student_id") AND ("s"."profile_id" = "auth"."uid"())))) OR (EXISTS ( SELECT 1
+   FROM "public"."instructor" "i"
+  WHERE (("i"."instructor_id" = "course_invite"."invited_by") AND ("i"."profile_id" = "auth"."uid"()))))));
+
+
+
+CREATE POLICY "ci_update" ON "public"."course_invite" FOR UPDATE TO "authenticated" USING (((EXISTS ( SELECT 1
+   FROM "public"."student" "s"
+  WHERE (("s"."student_id" = "course_invite"."student_id") AND ("s"."profile_id" = "auth"."uid"())))) OR (EXISTS ( SELECT 1
+   FROM "public"."instructor" "i"
+  WHERE (("i"."instructor_id" = "course_invite"."invited_by") AND ("i"."profile_id" = "auth"."uid"()))))));
+
+
+
+CREATE POLICY "comment_delete" ON "public"."achievement_comment" FOR DELETE TO "authenticated" USING (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "comment_insert" ON "public"."achievement_comment" FOR INSERT TO "authenticated" WITH CHECK (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "comment_select" ON "public"."achievement_comment" FOR SELECT TO "authenticated" USING (true);
+
+
+
+CREATE POLICY "comment_update" ON "public"."achievement_comment" FOR UPDATE TO "authenticated" USING (("user_id" = "auth"."uid"())) WITH CHECK (("user_id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."course_invite" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."course_resource" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "cr_delete" ON "public"."course_resource" FOR DELETE TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."instructor" "i"
+  WHERE (("i"."instructor_id" = "course_resource"."uploaded_by") AND ("i"."profile_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "cr_insert" ON "public"."course_resource" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."instructor" "i"
+  WHERE (("i"."instructor_id" = "course_resource"."uploaded_by") AND ("i"."profile_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "cr_select" ON "public"."course_resource" FOR SELECT TO "authenticated" USING ((("is_published" = true) AND ((EXISTS ( SELECT 1
+   FROM "public"."instructor" "i"
+  WHERE (("i"."instructor_id" = "course_resource"."uploaded_by") AND ("i"."profile_id" = "auth"."uid"())))) OR (EXISTS ( SELECT 1
+   FROM ("public"."manual_enrollment" "me"
+     JOIN "public"."student" "s" ON (("s"."student_id" = "me"."student_id")))
+  WHERE (("me"."manual_course_id" = "course_resource"."manual_course_id") AND ("s"."profile_id" = "auth"."uid"()) AND ("me"."is_active" = true)))))));
+
+
+
+CREATE POLICY "cr_update" ON "public"."course_resource" FOR UPDATE TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."instructor" "i"
+  WHERE (("i"."instructor_id" = "course_resource"."uploaded_by") AND ("i"."profile_id" = "auth"."uid"())))));
+
+
+
 ALTER TABLE "public"."department" ENABLE ROW LEVEL SECURITY;
 
 
 CREATE POLICY "department_auth_select" ON "public"."department" FOR SELECT TO "authenticated" USING (true);
+
+
+
+CREATE POLICY "em_insert" ON "public"."exam_mark" FOR INSERT TO "authenticated" WITH CHECK (("entered_by" = "auth"."uid"()));
+
+
+
+CREATE POLICY "em_select" ON "public"."exam_mark" FOR SELECT TO "authenticated" USING ((("entered_by" = "auth"."uid"()) OR (EXISTS ( SELECT 1
+   FROM "public"."student" "s"
+  WHERE (("s"."student_id" = "exam_mark"."student_id") AND ("s"."profile_id" = "auth"."uid"()))))));
+
+
+
+CREATE POLICY "em_update" ON "public"."exam_mark" FOR UPDATE TO "authenticated" USING (("entered_by" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."exam" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "exam_insert" ON "public"."exam" FOR INSERT TO "authenticated" WITH CHECK (("created_by" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."exam_mark" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "exam_select" ON "public"."exam" FOR SELECT TO "authenticated" USING ((("is_published" = true) OR ("created_by" = "auth"."uid"())));
+
+
+
+CREATE POLICY "exam_update" ON "public"."exam" FOR UPDATE TO "authenticated" USING (("created_by" = "auth"."uid"()));
 
 
 
@@ -1675,15 +3405,45 @@ CREATE POLICY "instructor_own_update" ON "public"."instructor" FOR UPDATE TO "au
 
 
 
-CREATE POLICY "la_admin_select" ON "public"."login_attempt" FOR SELECT TO "authenticated" USING ((("public"."current_profile"())."role" = 'admin'::"public"."app_role"));
+ALTER TABLE "public"."manual_course" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."manual_enrollment" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "mc_insert" ON "public"."manual_course" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."instructor" "i"
+  WHERE (("i"."instructor_id" = "manual_course"."instructor_id") AND ("i"."profile_id" = "auth"."uid"())))));
 
 
 
-CREATE POLICY "la_no_write" ON "public"."login_attempt" FOR INSERT TO "authenticated", "anon" WITH CHECK (false);
+CREATE POLICY "mc_select" ON "public"."manual_course" FOR SELECT TO "authenticated" USING (true);
 
 
 
-ALTER TABLE "public"."login_attempt" ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "mc_update" ON "public"."manual_course" FOR UPDATE TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."instructor" "i"
+  WHERE (("i"."instructor_id" = "manual_course"."instructor_id") AND ("i"."profile_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "me_delete" ON "public"."manual_enrollment" FOR DELETE TO "authenticated" USING (((EXISTS ( SELECT 1
+   FROM ("public"."manual_course" "mc"
+     JOIN "public"."instructor" "i" ON (("i"."instructor_id" = "mc"."instructor_id")))
+  WHERE (("mc"."manual_course_id" = "manual_enrollment"."manual_course_id") AND ("i"."profile_id" = "auth"."uid"())))) OR (EXISTS ( SELECT 1
+   FROM "public"."student" "s"
+  WHERE (("s"."student_id" = "manual_enrollment"."student_id") AND ("s"."profile_id" = "auth"."uid"()))))));
+
+
+
+CREATE POLICY "me_insert" ON "public"."manual_enrollment" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."student" "s"
+  WHERE (("s"."student_id" = "manual_enrollment"."student_id") AND ("s"."profile_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "me_select" ON "public"."manual_enrollment" FOR SELECT TO "authenticated" USING (true);
+
 
 
 ALTER TABLE "public"."notice_board_attachment" ENABLE ROW LEVEL SECURITY;
@@ -1717,6 +3477,17 @@ CREATE POLICY "notices_select" ON "public"."notice_board_post" FOR SELECT TO "au
 
 
 CREATE POLICY "notices_update" ON "public"."notice_board_post" FOR UPDATE TO "authenticated" USING (("author_id" = "auth"."uid"())) WITH CHECK (("author_id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."notification" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "notification_select" ON "public"."notification" FOR SELECT TO "authenticated" USING (("recipient_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "notification_update" ON "public"."notification" FOR UPDATE TO "authenticated" USING (("recipient_id" = "auth"."uid"())) WITH CHECK (("recipient_id" = "auth"."uid"()));
 
 
 
@@ -1787,6 +3558,106 @@ CREATE POLICY "program_auth_select" ON "public"."program" FOR SELECT TO "authent
 
 
 
+ALTER TABLE "public"."project" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."project_contributor" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "project_contributor_delete" ON "public"."project_contributor" FOR DELETE TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."project" "p"
+  WHERE (("p"."project_id" = "project_contributor"."project_id") AND ("p"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "project_contributor_insert" ON "public"."project_contributor" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."project" "p"
+  WHERE (("p"."project_id" = "project_contributor"."project_id") AND ("p"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "project_contributor_select" ON "public"."project_contributor" FOR SELECT TO "authenticated" USING (true);
+
+
+
+CREATE POLICY "project_delete" ON "public"."project" FOR DELETE TO "authenticated" USING (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "project_insert" ON "public"."project" FOR INSERT TO "authenticated" WITH CHECK (("user_id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."project_media" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "project_media_delete" ON "public"."project_media" FOR DELETE TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."project" "p"
+  WHERE (("p"."project_id" = "project_media"."project_id") AND ("p"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "project_media_insert" ON "public"."project_media" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."project" "p"
+  WHERE (("p"."project_id" = "project_media"."project_id") AND ("p"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "project_media_select" ON "public"."project_media" FOR SELECT TO "authenticated" USING (true);
+
+
+
+CREATE POLICY "project_select" ON "public"."project" FOR SELECT TO "authenticated" USING ((("is_published" = true) OR ("user_id" = "auth"."uid"())));
+
+
+
+ALTER TABLE "public"."project_skill" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "project_skill_delete" ON "public"."project_skill" FOR DELETE TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."project" "p"
+  WHERE (("p"."project_id" = "project_skill"."project_id") AND ("p"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "project_skill_insert" ON "public"."project_skill" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."project" "p"
+  WHERE (("p"."project_id" = "project_skill"."project_id") AND ("p"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "project_skill_select" ON "public"."project_skill" FOR SELECT TO "authenticated" USING (true);
+
+
+
+CREATE POLICY "project_update" ON "public"."project" FOR UPDATE TO "authenticated" USING (("user_id" = "auth"."uid"())) WITH CHECK (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "rating_insert" ON "public"."achievement_rating" FOR INSERT TO "authenticated" WITH CHECK (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "rating_select" ON "public"."achievement_rating" FOR SELECT TO "authenticated" USING (true);
+
+
+
+CREATE POLICY "rating_update" ON "public"."achievement_rating" FOR UPDATE TO "authenticated" USING (("user_id" = "auth"."uid"())) WITH CHECK (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "reaction_delete" ON "public"."achievement_reaction" FOR DELETE TO "authenticated" USING (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "reaction_insert" ON "public"."achievement_reaction" FOR INSERT TO "authenticated" WITH CHECK (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "reaction_select" ON "public"."achievement_reaction" FOR SELECT TO "authenticated" USING (true);
+
+
+
 CREATE POLICY "reactions_delete" ON "public"."notice_board_reaction" FOR DELETE TO "authenticated" USING (("user_id" = "auth"."uid"()));
 
 
@@ -1803,22 +3674,90 @@ CREATE POLICY "reactions_update" ON "public"."notice_board_reaction" FOR UPDATE 
 
 
 
-ALTER TABLE "public"."registration_request" ENABLE ROW LEVEL SECURITY;
+ALTER TABLE "public"."research_paper" ENABLE ROW LEVEL SECURITY;
 
 
-CREATE POLICY "rr_admin_select" ON "public"."registration_request" FOR SELECT TO "authenticated" USING ((("public"."current_profile"())."role" = 'admin'::"public"."app_role"));
+ALTER TABLE "public"."research_paper_author" ENABLE ROW LEVEL SECURITY;
 
 
-
-CREATE POLICY "rr_admin_update" ON "public"."registration_request" FOR UPDATE TO "authenticated" USING ((("public"."current_profile"())."role" = 'admin'::"public"."app_role"));
-
-
-
-CREATE POLICY "rr_anon_insert" ON "public"."registration_request" FOR INSERT TO "authenticated", "anon" WITH CHECK ((("role_requested" = ANY (ARRAY['student'::"public"."app_role", 'teacher'::"public"."app_role"])) AND ("status" = 'pending'::"public"."request_status")));
+CREATE POLICY "research_paper_delete" ON "public"."research_paper" FOR DELETE TO "authenticated" USING (("user_id" = "auth"."uid"()));
 
 
 
-CREATE POLICY "rr_no_delete" ON "public"."registration_request" FOR DELETE TO "authenticated" USING (false);
+CREATE POLICY "research_paper_insert" ON "public"."research_paper" FOR INSERT TO "authenticated" WITH CHECK (("user_id" = "auth"."uid"()));
+
+
+
+ALTER TABLE "public"."research_paper_keyword" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."research_paper_media" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "research_paper_select" ON "public"."research_paper" FOR SELECT TO "authenticated" USING ((("is_published" = true) OR ("user_id" = "auth"."uid"())));
+
+
+
+CREATE POLICY "research_paper_update" ON "public"."research_paper" FOR UPDATE TO "authenticated" USING (("user_id" = "auth"."uid"())) WITH CHECK (("user_id" = "auth"."uid"()));
+
+
+
+CREATE POLICY "rp_author_delete" ON "public"."research_paper_author" FOR DELETE TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."research_paper" "rp"
+  WHERE (("rp"."paper_id" = "research_paper_author"."paper_id") AND ("rp"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "rp_author_insert" ON "public"."research_paper_author" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."research_paper" "rp"
+  WHERE (("rp"."paper_id" = "research_paper_author"."paper_id") AND ("rp"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "rp_author_select" ON "public"."research_paper_author" FOR SELECT TO "authenticated" USING (true);
+
+
+
+CREATE POLICY "rp_keyword_delete" ON "public"."research_paper_keyword" FOR DELETE TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."research_paper" "rp"
+  WHERE (("rp"."paper_id" = "research_paper_keyword"."paper_id") AND ("rp"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "rp_keyword_insert" ON "public"."research_paper_keyword" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."research_paper" "rp"
+  WHERE (("rp"."paper_id" = "research_paper_keyword"."paper_id") AND ("rp"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "rp_keyword_select" ON "public"."research_paper_keyword" FOR SELECT TO "authenticated" USING (true);
+
+
+
+CREATE POLICY "rp_media_delete" ON "public"."research_paper_media" FOR DELETE TO "authenticated" USING ((EXISTS ( SELECT 1
+   FROM "public"."research_paper" "rp"
+  WHERE (("rp"."paper_id" = "research_paper_media"."paper_id") AND ("rp"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "rp_media_insert" ON "public"."research_paper_media" FOR INSERT TO "authenticated" WITH CHECK ((EXISTS ( SELECT 1
+   FROM "public"."research_paper" "rp"
+  WHERE (("rp"."paper_id" = "research_paper_media"."paper_id") AND ("rp"."user_id" = "auth"."uid"())))));
+
+
+
+CREATE POLICY "rp_media_select" ON "public"."research_paper_media" FOR SELECT TO "authenticated" USING (true);
+
+
+
+ALTER TABLE "public"."skill" ENABLE ROW LEVEL SECURITY;
+
+
+CREATE POLICY "skill_insert" ON "public"."skill" FOR INSERT TO "authenticated" WITH CHECK (true);
+
+
+
+CREATE POLICY "skill_select" ON "public"."skill" FOR SELECT TO "authenticated" USING (true);
 
 
 
@@ -1846,7 +3785,33 @@ ALTER PUBLICATION "supabase_realtime" OWNER TO "postgres";
 
 
 
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."chat_message";
+
+
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."chat_message_attachment";
+
+
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."chat_message_reaction";
+
+
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."chat_request";
+
+
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."chat_room";
+
+
+
 ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."notice_board_post";
+
+
+
+ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."notification";
+
+ALTER TABLE "public"."notification" REPLICA IDENTITY FULL;
 
 
 
@@ -2004,6 +3969,12 @@ GRANT USAGE ON SCHEMA "public" TO "service_role";
 
 
 
+GRANT ALL ON FUNCTION "public"."auto_assign_grade"("p_marks" numeric, "p_total" numeric) TO "anon";
+GRANT ALL ON FUNCTION "public"."auto_assign_grade"("p_marks" numeric, "p_total" numeric) TO "authenticated";
+GRANT ALL ON FUNCTION "public"."auto_assign_grade"("p_marks" numeric, "p_total" numeric) TO "service_role";
+
+
+
 GRANT ALL ON FUNCTION "public"."is_valid_bd_phone"("p" "text") TO "anon";
 GRANT ALL ON FUNCTION "public"."is_valid_bd_phone"("p" "text") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."is_valid_bd_phone"("p" "text") TO "service_role";
@@ -2052,39 +4023,51 @@ GRANT ALL ON FUNCTION "public"."enforce_student_profile_restrictions"() TO "serv
 
 
 
-GRANT ALL ON FUNCTION "public"."fn_approve_request"("p_request_id" integer, "p_admin_id" "uuid", "p_student_roll" "text", "p_employee_id" "text") TO "anon";
-GRANT ALL ON FUNCTION "public"."fn_approve_request"("p_request_id" integer, "p_admin_id" "uuid", "p_student_roll" "text", "p_employee_id" "text") TO "authenticated";
-GRANT ALL ON FUNCTION "public"."fn_approve_request"("p_request_id" integer, "p_admin_id" "uuid", "p_student_roll" "text", "p_employee_id" "text") TO "service_role";
-
-
-
 GRANT ALL ON FUNCTION "public"."fn_change_role"("p_admin_id" "uuid", "p_target_id" "uuid", "p_new_role" "public"."app_role") TO "anon";
 GRANT ALL ON FUNCTION "public"."fn_change_role"("p_admin_id" "uuid", "p_target_id" "uuid", "p_new_role" "public"."app_role") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."fn_change_role"("p_admin_id" "uuid", "p_target_id" "uuid", "p_new_role" "public"."app_role") TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."fn_reject_request"("p_request_id" integer, "p_admin_id" "uuid", "p_reason" "text") TO "anon";
-GRANT ALL ON FUNCTION "public"."fn_reject_request"("p_request_id" integer, "p_admin_id" "uuid", "p_reason" "text") TO "authenticated";
-GRANT ALL ON FUNCTION "public"."fn_reject_request"("p_request_id" integer, "p_admin_id" "uuid", "p_reason" "text") TO "service_role";
+GRANT ALL ON FUNCTION "public"."fn_get_or_create_direct_room"("p_other_profile_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."fn_get_or_create_direct_room"("p_other_profile_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."fn_get_or_create_direct_room"("p_other_profile_id" "uuid") TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."fn_submit_signup_request"("p_role" "text", "p_email" "text", "p_first_name" "text", "p_last_name" "text", "p_phone" "text", "p_gender" "text", "p_dob" "date", "p_program_id" integer, "p_batch_year" smallint, "p_dept_id" integer, "p_designation" "text", "p_specialization" "text") TO "anon";
-GRANT ALL ON FUNCTION "public"."fn_submit_signup_request"("p_role" "text", "p_email" "text", "p_first_name" "text", "p_last_name" "text", "p_phone" "text", "p_gender" "text", "p_dob" "date", "p_program_id" integer, "p_batch_year" smallint, "p_dept_id" integer, "p_designation" "text", "p_specialization" "text") TO "authenticated";
-GRANT ALL ON FUNCTION "public"."fn_submit_signup_request"("p_role" "text", "p_email" "text", "p_first_name" "text", "p_last_name" "text", "p_phone" "text", "p_gender" "text", "p_dob" "date", "p_program_id" integer, "p_batch_year" smallint, "p_dept_id" integer, "p_designation" "text", "p_specialization" "text") TO "service_role";
+GRANT ALL ON FUNCTION "public"."fn_get_or_create_direct_room"("p_other_profile_id" "uuid", "p_my_profile_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."fn_get_or_create_direct_room"("p_other_profile_id" "uuid", "p_my_profile_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."fn_get_or_create_direct_room"("p_other_profile_id" "uuid", "p_my_profile_id" "uuid") TO "service_role";
 
 
 
-GRANT ALL ON FUNCTION "public"."fn_verify_email_token"("p_token" "text") TO "anon";
-GRANT ALL ON FUNCTION "public"."fn_verify_email_token"("p_token" "text") TO "authenticated";
-GRANT ALL ON FUNCTION "public"."fn_verify_email_token"("p_token" "text") TO "service_role";
+GRANT ALL ON FUNCTION "public"."fn_hash_password"("p_password" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."fn_hash_password"("p_password" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."fn_hash_password"("p_password" "text") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."fn_join_room_by_code"("p_code" "text", "p_password" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."fn_join_room_by_code"("p_code" "text", "p_password" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."fn_join_room_by_code"("p_code" "text", "p_password" "text") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."fn_profile_id_by_email"("p_email" "text") TO "anon";
+GRANT ALL ON FUNCTION "public"."fn_profile_id_by_email"("p_email" "text") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."fn_profile_id_by_email"("p_email" "text") TO "service_role";
 
 
 
 GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "anon";
 GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."handle_new_user"() TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."is_room_member"("p_room_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."is_room_member"("p_room_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."is_room_member"("p_room_id" "uuid") TO "service_role";
 
 
 
@@ -2151,6 +4134,169 @@ GRANT ALL ON FUNCTION "public"."update_notice_board_post_updated_at"() TO "servi
 
 
 
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."achievement_comment" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."achievement_comment" TO "authenticated";
+GRANT ALL ON TABLE "public"."achievement_comment" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."achievement_comment_comment_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."achievement_comment_comment_id_seq" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."achievement_rating" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."achievement_rating" TO "authenticated";
+GRANT ALL ON TABLE "public"."achievement_rating" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."achievement_rating_rating_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."achievement_rating_rating_id_seq" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."achievement_reaction" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."achievement_reaction" TO "authenticated";
+GRANT ALL ON TABLE "public"."achievement_reaction" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."achievement_reaction_reaction_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."achievement_reaction_reaction_id_seq" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."advisor" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."advisor" TO "authenticated";
+GRANT ALL ON TABLE "public"."advisor" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."advisor_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."advisor_id_seq" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."attendance_record" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."attendance_record" TO "authenticated";
+GRANT ALL ON TABLE "public"."attendance_record" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."attendance_record_record_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."attendance_record_record_id_seq" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."attendance_session" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."attendance_session" TO "authenticated";
+GRANT ALL ON TABLE "public"."attendance_session" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."attendance_session_session_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."attendance_session_session_id_seq" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."certificate" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."certificate" TO "authenticated";
+GRANT ALL ON TABLE "public"."certificate" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."certificate_certificate_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."certificate_certificate_id_seq" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."certificate_media" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."certificate_media" TO "authenticated";
+GRANT ALL ON TABLE "public"."certificate_media" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."certificate_media_media_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."certificate_media_media_id_seq" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."certificate_skill" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."certificate_skill" TO "authenticated";
+GRANT ALL ON TABLE "public"."certificate_skill" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."cgpa_record" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."cgpa_record" TO "authenticated";
+GRANT ALL ON TABLE "public"."cgpa_record" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."cgpa_record_record_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."cgpa_record_record_id_seq" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."chat_message" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."chat_message" TO "authenticated";
+GRANT ALL ON TABLE "public"."chat_message" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."chat_message_attachment" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."chat_message_attachment" TO "authenticated";
+GRANT ALL ON TABLE "public"."chat_message_attachment" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."chat_message_reaction" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."chat_message_reaction" TO "authenticated";
+GRANT ALL ON TABLE "public"."chat_message_reaction" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."chat_request" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."chat_request" TO "authenticated";
+GRANT ALL ON TABLE "public"."chat_request" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."chat_room" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."chat_room" TO "authenticated";
+GRANT ALL ON TABLE "public"."chat_room" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."chat_room_member" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."chat_room_member" TO "authenticated";
+GRANT ALL ON TABLE "public"."chat_room_member" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."course_invite" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."course_invite" TO "authenticated";
+GRANT ALL ON TABLE "public"."course_invite" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."course_invite_invite_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."course_invite_invite_id_seq" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."course_resource" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."course_resource" TO "authenticated";
+GRANT ALL ON TABLE "public"."course_resource" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."course_resource_resource_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."course_resource_resource_id_seq" TO "service_role";
+
+
+
 GRANT ALL ON TABLE "public"."department" TO "service_role";
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."department" TO "authenticated";
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."department" TO "anon";
@@ -2158,8 +4304,30 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."department" TO "anon";
 
 
 GRANT ALL ON SEQUENCE "public"."department_dept_id_seq" TO "service_role";
-GRANT SELECT,USAGE ON SEQUENCE "public"."department_dept_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."department_dept_id_seq" TO "authenticated";
 GRANT SELECT,USAGE ON SEQUENCE "public"."department_dept_id_seq" TO "anon";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."exam" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."exam" TO "authenticated";
+GRANT ALL ON TABLE "public"."exam" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."exam_exam_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."exam_exam_id_seq" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."exam_mark" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."exam_mark" TO "authenticated";
+GRANT ALL ON TABLE "public"."exam_mark" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."exam_mark_mark_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."exam_mark_mark_id_seq" TO "service_role";
 
 
 
@@ -2170,20 +4338,30 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."instructor" TO "anon";
 
 
 GRANT ALL ON SEQUENCE "public"."instructor_instructor_id_seq" TO "service_role";
-GRANT SELECT,USAGE ON SEQUENCE "public"."instructor_instructor_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."instructor_instructor_id_seq" TO "authenticated";
 GRANT SELECT,USAGE ON SEQUENCE "public"."instructor_instructor_id_seq" TO "anon";
 
 
 
-GRANT ALL ON TABLE "public"."login_attempt" TO "service_role";
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."login_attempt" TO "authenticated";
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."login_attempt" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."manual_course" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."manual_course" TO "authenticated";
+GRANT ALL ON TABLE "public"."manual_course" TO "service_role";
 
 
 
-GRANT ALL ON SEQUENCE "public"."login_attempt_attempt_id_seq" TO "service_role";
-GRANT SELECT,USAGE ON SEQUENCE "public"."login_attempt_attempt_id_seq" TO "authenticated";
-GRANT SELECT,USAGE ON SEQUENCE "public"."login_attempt_attempt_id_seq" TO "anon";
+GRANT ALL ON SEQUENCE "public"."manual_course_manual_course_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."manual_course_manual_course_id_seq" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."manual_enrollment" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."manual_enrollment" TO "authenticated";
+GRANT ALL ON TABLE "public"."manual_enrollment" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."manual_enrollment_enrollment_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."manual_enrollment_enrollment_id_seq" TO "service_role";
 
 
 
@@ -2223,6 +4401,17 @@ GRANT ALL ON TABLE "public"."notice_board_reaction" TO "service_role";
 
 
 
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."notification" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."notification" TO "authenticated";
+GRANT ALL ON TABLE "public"."notification" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."notification_notification_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."notification_notification_id_seq" TO "service_role";
+
+
+
 GRANT ALL ON TABLE "public"."program" TO "service_role";
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."program" TO "authenticated";
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."program" TO "anon";
@@ -2230,20 +4419,97 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."program" TO "anon";
 
 
 GRANT ALL ON SEQUENCE "public"."program_program_id_seq" TO "service_role";
-GRANT SELECT,USAGE ON SEQUENCE "public"."program_program_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."program_program_id_seq" TO "authenticated";
 GRANT SELECT,USAGE ON SEQUENCE "public"."program_program_id_seq" TO "anon";
 
 
 
-GRANT ALL ON TABLE "public"."registration_request" TO "service_role";
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."registration_request" TO "authenticated";
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."registration_request" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."project" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."project" TO "authenticated";
+GRANT ALL ON TABLE "public"."project" TO "service_role";
 
 
 
-GRANT ALL ON SEQUENCE "public"."registration_request_request_id_seq" TO "service_role";
-GRANT SELECT,USAGE ON SEQUENCE "public"."registration_request_request_id_seq" TO "authenticated";
-GRANT SELECT,USAGE ON SEQUENCE "public"."registration_request_request_id_seq" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."project_contributor" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."project_contributor" TO "authenticated";
+GRANT ALL ON TABLE "public"."project_contributor" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."project_contributor_contrib_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."project_contributor_contrib_id_seq" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."project_media" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."project_media" TO "authenticated";
+GRANT ALL ON TABLE "public"."project_media" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."project_media_media_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."project_media_media_id_seq" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."project_project_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."project_project_id_seq" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."project_skill" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."project_skill" TO "authenticated";
+GRANT ALL ON TABLE "public"."project_skill" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."research_paper" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."research_paper" TO "authenticated";
+GRANT ALL ON TABLE "public"."research_paper" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."research_paper_author" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."research_paper_author" TO "authenticated";
+GRANT ALL ON TABLE "public"."research_paper_author" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."research_paper_author_author_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."research_paper_author_author_id_seq" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."research_paper_keyword" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."research_paper_keyword" TO "authenticated";
+GRANT ALL ON TABLE "public"."research_paper_keyword" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."research_paper_media" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."research_paper_media" TO "authenticated";
+GRANT ALL ON TABLE "public"."research_paper_media" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."research_paper_media_media_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."research_paper_media_media_id_seq" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."research_paper_paper_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."research_paper_paper_id_seq" TO "service_role";
+
+
+
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."skill" TO "anon";
+GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."skill" TO "authenticated";
+GRANT ALL ON TABLE "public"."skill" TO "service_role";
+
+
+
+GRANT ALL ON SEQUENCE "public"."skill_skill_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."skill_skill_id_seq" TO "service_role";
 
 
 
@@ -2254,7 +4520,7 @@ GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."student" TO "anon";
 
 
 GRANT ALL ON SEQUENCE "public"."student_student_id_seq" TO "service_role";
-GRANT SELECT,USAGE ON SEQUENCE "public"."student_student_id_seq" TO "authenticated";
+GRANT ALL ON SEQUENCE "public"."student_student_id_seq" TO "authenticated";
 GRANT SELECT,USAGE ON SEQUENCE "public"."student_student_id_seq" TO "anon";
 
 
@@ -2274,18 +4540,6 @@ GRANT ALL ON TABLE "public"."v_my_student_profile" TO "service_role";
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."v_notice_board_posts" TO "anon";
 GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."v_notice_board_posts" TO "authenticated";
 GRANT ALL ON TABLE "public"."v_notice_board_posts" TO "service_role";
-
-
-
-GRANT ALL ON TABLE "public"."v_pending_requests" TO "service_role";
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."v_pending_requests" TO "authenticated";
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."v_pending_requests" TO "anon";
-
-
-
-GRANT ALL ON TABLE "public"."v_suspicious_logins" TO "service_role";
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."v_suspicious_logins" TO "authenticated";
-GRANT SELECT,INSERT,DELETE,UPDATE ON TABLE "public"."v_suspicious_logins" TO "anon";
 
 
 

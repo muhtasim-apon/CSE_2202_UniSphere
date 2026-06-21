@@ -332,3 +332,87 @@ export async function getCourseDetail(token: string, courseId: number): Promise<
 export async function updateHireDate(token: string, hire_date: string): Promise<{ hire_date: string }> {
   return (await apiFetch(`${BASE}/api/profile/hire-date`, { method: 'PATCH', headers: authHeader(token), body: JSON.stringify({ hire_date }) })).json()
 }
+
+// ── New Attendance/Exam detail types ───────────────────────────────────────
+
+export interface SessionWithRecords extends AttendanceSession {
+  records: AttendanceRecord[]
+  summary: { present: number; absent: number; late: number; excused: number; total: number }
+}
+
+export interface StudentAttendanceCourse {
+  course_id: number
+  course_name: string
+  course_code: string | null
+  semester: string | null
+  total_sessions: number
+  present: number
+  absent: number
+  late: number
+  excused: number
+  attendance_pct: number
+  sessions: {
+    session_id: number
+    session_date: string
+    session_title: string | null
+    topic: string | null
+    status: 'Present' | 'Absent' | 'Late' | 'Excused' | null
+    remarks: string | null
+  }[]
+}
+
+export interface GradebookExam {
+  exam_id: number
+  exam_name: string
+  exam_type: string
+  total_marks: number
+  credit_hours: number
+  exam_date: string | null
+}
+
+export interface GradebookStudent {
+  student_id: number
+  first_name: string
+  last_name: string
+  student_roll: string
+  marks: Record<number, { mark_id: number; marks_obtained: number; grade: string | null; grade_points: number | null; remarks: string | null }>
+}
+
+export interface StudentMarkEntry {
+  exam_id: number
+  exam_name: string
+  exam_type: string
+  total_marks: number
+  credit_hours: number
+  exam_date: string | null
+  marks_obtained: number
+  grade: string | null
+  grade_points: number | null
+  remarks: string | null
+}
+
+export interface StudentMarksCourse {
+  course_id: number
+  course_name: string
+  course_code: string | null
+  semester: string | null
+  by_type: Record<string, StudentMarkEntry[]>
+}
+
+// ── New API functions ──────────────────────────────────────────────────────
+
+export async function getCourseAttendanceFull(token: string, courseId: number): Promise<{ sessions: SessionWithRecords[] }> {
+  return (await apiFetch(`${BASE}/api/classes/attendance/course/${courseId}/full`, { headers: { Authorization: `Bearer ${token}` } })).json()
+}
+
+export async function getMyAttendanceDetail(token: string): Promise<{ courses: StudentAttendanceCourse[] }> {
+  return (await apiFetch(`${BASE}/api/classes/attendance/my-detail`, { headers: { Authorization: `Bearer ${token}` } })).json()
+}
+
+export async function getCourseGradebook(token: string, courseId: number): Promise<{ exams: GradebookExam[]; students: GradebookStudent[] }> {
+  return (await apiFetch(`${BASE}/api/classes/exams/course/${courseId}/gradebook`, { headers: { Authorization: `Bearer ${token}` } })).json()
+}
+
+export async function getMyAllMarks(token: string): Promise<{ courses: StudentMarksCourse[] }> {
+  return (await apiFetch(`${BASE}/api/classes/exams/my-marks`, { headers: { Authorization: `Bearer ${token}` } })).json()
+}

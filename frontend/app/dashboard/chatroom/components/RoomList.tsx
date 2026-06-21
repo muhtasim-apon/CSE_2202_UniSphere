@@ -137,7 +137,9 @@ export default function RoomList({ rooms, activeRoomId, onSelect, onNewRoom, tok
             {/* Avatar */}
             <div className="w-9 h-9 rounded-full bg-accent/20 text-accent flex items-center justify-center flex-shrink-0 text-sm font-bold overflow-hidden">
               {room.type === 'group' ? (
-                <Hash size={15} />
+                room.avatar_url
+                  ? <img src={room.avatar_url} alt="" className="w-full h-full object-cover" />
+                  : <span>{room.title?.[0]?.toUpperCase() ?? '#'}</span>
               ) : room.other_avatar_url ? (
                 <img src={room.other_avatar_url} alt="" className="w-full h-full object-cover" />
               ) : (
@@ -166,7 +168,15 @@ export default function RoomList({ rooms, activeRoomId, onSelect, onNewRoom, tok
               {room.last_message && (
                 <p className="text-xs truncate mt-0.5">
                   {room.last_message.body
-                    ? <span className="text-muted">{room.last_message.body}</span>
+                    ? (() => {
+                        if (room.last_message.body!.startsWith('{"_sys"')) {
+                          try {
+                            const sys = JSON.parse(room.last_message.body!)
+                            return <span className="text-muted italic">{sys.text}</span>
+                          } catch {}
+                        }
+                        return <span className="text-muted">{room.last_message.body}</span>
+                      })()
                     : room.last_message.attachment_type
                       ? <AttachmentPreview type={room.last_message.attachment_type} />
                       : <span className="text-muted italic">(attachment)</span>

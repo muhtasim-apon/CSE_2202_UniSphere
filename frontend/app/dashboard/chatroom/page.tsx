@@ -28,6 +28,7 @@ export default async function ChatroomPage() {
       signOutButton={<SignOutButton />}
       activeItem="chatroom"
       userRole={profile?.role}
+      fullHeight
     >
       <ChatroomClient userId={user.id} displayName={`${firstName} ${lastName}`.trim() || null} avatarUrl={profile?.avatar_url ?? null} />
     </DashboardShell>

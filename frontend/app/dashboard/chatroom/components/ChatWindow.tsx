@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Send, Paperclip, X, Mic, Square, MoreVertical, Copy, Check, Trash2, LogOut, Pencil, UserPlus, Users, ImagePlus } from 'lucide-react'
 import {
@@ -9,6 +9,7 @@ import {
   getRoomMembers, inviteMember, getPeople,
   type ChatMessage, type ReactionType, type RoomMember, type PendingInvite, type PersonEntry, setGroupAvatar, setMemberNickname,
 } from '@/app/lib/chatApi'
+import { createClient } from '@/lib/supabase/client'
 import { useChatRealtime } from '../useChatRealtime'
 import MessageBubble from './MessageBubble'
 import ImageCropModal from './ImageCropModal'
@@ -53,6 +54,7 @@ export default function ChatWindow({ roomId, roomType, roomTitle, roomAvatar, ro
   // Sync avatar when prop changes (e.g. after refresh)
   useEffect(() => { setGroupAvatarState(roomAvatar ?? null) }, [roomAvatar])
   const shouldScrollRef = useRef(true) // only scroll to bottom for new messages, not history loads
+  const prevScrollHeightRef = useRef<number | null>(null) // set before prepending older messages
   // Cache sender profiles so realtime messages can show the correct name/avatar
   const profileCache = useRef<Record<string, { display_name: string | null; avatar_url: string | null }>>({})
   // Seed own profile immediately
@@ -105,16 +107,11 @@ export default function ChatWindow({ roomId, roomType, roomTitle, roomAvatar, ro
         if (m.sender_id && m.sender) profileCache.current[m.sender_id] = m.sender
       })
       if (before) {
-        // Loading older messages — preserve scroll position
+        // Loading older messages — record height before prepending; restore in useLayoutEffect
+        if (enriched.length === 0) return  // nothing to prepend
         shouldScrollRef.current = false
-        const container = scrollRef.current
-        const prevHeight = container?.scrollHeight ?? 0
-        setMessages(prev => [...prev, ...enriched])
-        // Restore scroll position after DOM updates
-        requestAnimationFrame(() => {
-          if (container) container.scrollTop = container.scrollHeight - prevHeight
-          shouldScrollRef.current = true
-        })
+        prevScrollHeightRef.current = scrollRef.current?.scrollHeight ?? null
+        setMessages(prev => [...enriched.reverse(), ...prev])
       } else {
         shouldScrollRef.current = true
         setMessages([...enriched].reverse())
@@ -132,13 +129,10 @@ export default function ChatWindow({ roomId, roomType, roomTitle, roomAvatar, ro
     markRead(roomId, token).catch(() => {})
   }, [roomId, load, token])
 
-  // For group chats: load members on mount to populate nickname + avatar maps
-  useEffect(() => {
-    if (roomType !== 'group') return
+  function refreshGroupMembers() {
     getRoomMembers(roomId, token).then(({ members: m, pending_invites: p }) => {
       setMembers(m)
       setPendingInvites(p)
-      // Build nickname map AND seed profileCache with member avatars
       const map: Record<string, string> = {}
       m.forEach(mem => {
         const firstName = mem.profiles?.display_name?.split(' ')[0] ?? 'Unknown'
@@ -151,18 +145,47 @@ export default function ChatWindow({ roomId, roomType, roomTitle, roomAvatar, ro
         }
       })
       setNicknameMap(map)
+      // Patch any messages whose sender wasn't in cache yet
+      setMessages(prev => prev.map(msg => ({
+        ...msg,
+        sender: msg.sender ?? profileCache.current[msg.sender_id] ?? null,
+      })))
     }).catch(() => {})
+  }
+
+  // For group chats: load members on mount to populate nickname + avatar maps
+  useEffect(() => {
+    if (roomType !== 'group') return
+    refreshGroupMembers()
   }, [roomId, roomType, token])
 
+  // Subscribe to new members joining so profileCache stays current
   useEffect(() => {
-    if (!shouldScrollRef.current || !scrollRef.current) return
+    if (roomType !== 'group') return
+    const supabase = createClient()
+    const ch = supabase
+      .channel(`members:${roomId}`)
+      .on('postgres_changes' as any, {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'chat_room_member',
+        filter: `room_id=eq.${roomId}`,
+      }, () => { refreshGroupMembers() })
+      .subscribe()
+    return () => { supabase.removeChannel(ch) }
+  }, [roomId, roomType, token])
+
+  useLayoutEffect(() => {
     const el = scrollRef.current
-    // Double RAF: first lets React flush, second lets browser paint
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        el.scrollTop = el.scrollHeight
-      })
-    })
+    if (!el) return
+    if (prevScrollHeightRef.current !== null) {
+      // Synchronously restore position after prepending older messages
+      el.scrollTop = el.scrollHeight - prevScrollHeightRef.current
+      prevScrollHeightRef.current = null
+      shouldScrollRef.current = true
+    } else if (shouldScrollRef.current) {
+      el.scrollTop = el.scrollHeight
+    }
   }, [messages.length])
 
   const { sendTyping } = useChatRealtime({

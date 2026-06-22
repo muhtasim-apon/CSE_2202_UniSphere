@@ -15,6 +15,7 @@ type DashboardShellProps = {
   signOutButton: ReactNode
   activeItem?: string
   userRole?: string
+  fullHeight?: boolean
   children: ReactNode
 }
 
@@ -26,6 +27,7 @@ export default function DashboardShell({
   signOutButton,
   activeItem = 'dashboard',
   userRole,
+  fullHeight,
   children,
 }: DashboardShellProps) {
   const [collapsed, setCollapsed] = useState(false)
@@ -57,8 +59,8 @@ export default function DashboardShell({
           userRole={userRole}
         />
 
-        <main className="flex-1 overflow-y-auto p-4 md:p-8">
-          <PageTransition>{children}</PageTransition>
+        <main className={fullHeight ? 'flex-1 overflow-hidden flex flex-col min-h-0' : 'flex-1 overflow-y-auto p-4 md:p-8'}>
+          {fullHeight ? children : <PageTransition>{children}</PageTransition>}
         </main>
       </div>
     </div>

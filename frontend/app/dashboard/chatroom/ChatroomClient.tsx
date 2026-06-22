@@ -193,7 +193,7 @@ export default function ChatroomClient({ userId, displayName, avatarUrl }: { use
   ]
 
   return (
-    <div className="flex h-[calc(100vh-10rem)] overflow-hidden rounded-card border border-border bg-card shadow-[var(--shadow-card)]">
+    <div className="flex h-full overflow-hidden rounded-card border border-border bg-card shadow-[var(--shadow-card)]">
       {/* Left column */}
       <div className="w-72 flex-shrink-0 flex flex-col border-r border-border">
         {/* Top-level tabs */}

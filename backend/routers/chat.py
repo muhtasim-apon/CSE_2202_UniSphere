@@ -581,6 +581,7 @@ async def join_room(
     body: JoinRoomRequest,
     authorization: Optional[str] = Header(default=None),
 ):
+    import json as _json
     user = await _auth(authorization)
     res = _supabase.rpc(
         "fn_join_room_by_code",
@@ -588,6 +589,19 @@ async def join_room(
     ).execute()
     room_id = res.data
     room = _supabase.table("chat_room").select("*").eq("id", room_id).single().execute()
+
+    # Insert system join message
+    profile = _supabase.table("profiles").select("display_name").eq("id", user.id).maybe_single().execute()
+    first_name = (profile.data or {}).get("display_name", "Someone").split()[0] if profile and profile.data else "Someone"
+    try:
+        _supabase.table("chat_message").insert({
+            "room_id": room_id,
+            "sender_id": user.id,
+            "body": _json.dumps({"_sys": "joined", "text": f"{first_name} joined the group"}),
+        }).execute()
+    except Exception:
+        pass
+
     return room.data
 
 

@@ -584,7 +584,7 @@ async def join_room(
     user = await _auth(authorization)
     res = _supabase.rpc(
         "fn_join_room_by_code",
-        {"p_code": body.room_code, "p_password": body.password or None},
+        {"p_code": body.room_code, "p_password": body.password or None, "p_user_id": user.id},
     ).execute()
     room_id = res.data
     room = _supabase.table("chat_room").select("*").eq("id", room_id).single().execute()

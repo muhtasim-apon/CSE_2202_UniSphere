@@ -476,13 +476,13 @@ $$;
 ALTER FUNCTION "public"."fn_hash_password"("p_password" "text") OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "public"."fn_join_room_by_code"("p_code" "text", "p_password" "text" DEFAULT NULL::"text") RETURNS "uuid"
+CREATE OR REPLACE FUNCTION "public"."fn_join_room_by_code"("p_code" "text", "p_password" "text" DEFAULT NULL::"text", "p_user_id" "uuid" DEFAULT NULL::"uuid") RETURNS "uuid"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO 'extensions', 'public'
     AS $$
 DECLARE
   v_room    public.chat_room%ROWTYPE;
-  v_my_id   UUID := auth.uid();
+  v_my_id   UUID := COALESCE(p_user_id, auth.uid());
 BEGIN
   SELECT * INTO v_room FROM public.chat_room WHERE room_code = p_code;
 

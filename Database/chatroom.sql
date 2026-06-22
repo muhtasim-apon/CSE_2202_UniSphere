@@ -152,7 +152,7 @@ END;
 $$;
 
 -- Join a room by code (with optional password verification)
-CREATE OR REPLACE FUNCTION public.fn_join_room_by_code(p_code TEXT, p_password TEXT DEFAULT NULL)
+CREATE OR REPLACE FUNCTION public.fn_join_room_by_code(p_code TEXT, p_password TEXT DEFAULT NULL, p_user_id UUID DEFAULT NULL)
 RETURNS UUID
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -160,7 +160,7 @@ SET search_path = extensions, public
 AS $$
 DECLARE
   v_room    public.chat_room%ROWTYPE;
-  v_my_id   UUID := auth.uid();
+  v_my_id   UUID := COALESCE(p_user_id, auth.uid());
 BEGIN
   SELECT * INTO v_room FROM public.chat_room WHERE room_code = p_code;
 

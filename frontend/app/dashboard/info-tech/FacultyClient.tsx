@@ -355,7 +355,7 @@ function DetailPanel({
         className="fixed right-0 top-0 bottom-0 z-50 w-full max-w-2xl bg-card overflow-y-auto shadow-2xl border-l border-border"
       >
         {/* Panel header */}
-        <div className="bg-gradient-to-br from-primary via-secondary to-accent p-6 relative">
+        <div className="bg-gradient-to-br from-primary via-secondary to-accent dark:bg-none dark:bg-[#1a3320] p-6 relative">
           <button
             onClick={onClose}
             className="absolute right-4 top-4 rounded-full bg-white/10 p-1.5 text-white hover:bg-white/20 transition"
@@ -781,7 +781,7 @@ export default function FacultyClient() {
     <div className="space-y-6">
       {/* Sub-header */}
       <div className="overflow-hidden rounded-card shadow-lg">
-        <div className="bg-gradient-to-r from-primary via-secondary to-accent p-6 md:p-8">
+        <div className="bg-gradient-to-r from-primary via-secondary to-accent dark:from-[#2b3245] dark:via-[#1e2838] dark:to-[#141d2b] p-6 md:p-8">
           <div className="flex items-start gap-3">
             <GraduationCap className="mt-1 h-8 w-8 flex-shrink-0 text-white/80" />
             <div>

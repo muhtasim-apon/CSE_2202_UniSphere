@@ -174,7 +174,7 @@ export default function InfoTechClient({ articles }: { articles: Article[] }) {
         transition={{ duration: 0.5 }}
       >
         <div className="overflow-hidden rounded-card shadow-lg">
-          <div className="bg-gradient-to-r from-primary via-secondary to-accent p-6 md:p-8">
+          <div className="bg-gradient-to-r from-primary via-secondary to-accent dark:from-[#2b3245] dark:via-[#1e2838] dark:to-[#141d2b] p-6 md:p-8">
             <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="flex items-start gap-3">
                 <Newspaper className="mt-1 h-8 w-8 flex-shrink-0 text-white/80" />

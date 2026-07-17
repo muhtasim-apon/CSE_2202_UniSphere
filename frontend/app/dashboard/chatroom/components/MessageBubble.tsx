@@ -78,7 +78,7 @@ export default function MessageBubble({
 
   return (
     <div
-      className={`group flex gap-2 ${grouped ? 'mb-0.5' : 'mt-3 mb-0.5'} ${isOwn ? 'flex-row-reverse' : 'flex-row'}`}
+      className={`group flex gap-2 min-w-0 ${grouped ? 'mb-0.5' : 'mt-3 mb-0.5'} ${isOwn ? 'flex-row-reverse' : 'flex-row'}`}
     >
       {/* Avatar — only shown for first in a group */}
       <div className="flex-shrink-0 w-8">
@@ -92,7 +92,7 @@ export default function MessageBubble({
         )}
       </div>
 
-      <div className={`max-w-[70%] flex flex-col ${isOwn ? 'items-end' : 'items-start'}`}>
+      <div className={`max-w-[70%] min-w-0 flex flex-col ${isOwn ? 'items-end' : 'items-start'}`}>
 
         {/* Sender name label — group chats, first message in a group, not own */}
         {isGroup && !isOwn && !grouped && displayName && (
@@ -110,13 +110,13 @@ export default function MessageBubble({
         {message.body && (
           <div
             onClick={() => setShowTime(t => !t)}
-            className={`px-4 py-2 text-sm leading-relaxed cursor-pointer select-none ${bubbleShape()} ${
+            className={`px-4 py-2 text-sm leading-relaxed cursor-pointer select-none overflow-hidden ${bubbleShape()} ${
               isOwn
                 ? 'bg-cta text-cta-text'
                 : 'bg-card text-primary border border-border'
             }`}
           >
-            <p className="whitespace-pre-wrap break-words">{message.body}</p>
+            <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{message.body}</p>
           </div>
         )}
 

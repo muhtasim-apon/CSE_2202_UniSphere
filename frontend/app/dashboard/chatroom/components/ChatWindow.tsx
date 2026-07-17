@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Send, Paperclip, X, Mic, Square, MoreVertical, Copy, Check, Trash2, LogOut, Pencil, UserPlus, Users, ImagePlus } from 'lucide-react'
+import { Send, Paperclip, X, Mic, Pause, Play, MoreVertical, Copy, Check, Trash2, LogOut, Pencil, UserPlus, Users, ImagePlus } from 'lucide-react'
 import {
   getMessages, sendMessage, editMessage, deleteMessage,
   uploadChatAttachment, addReaction, removeReaction, markRead, deleteRoom, renameRoom,
@@ -85,6 +85,7 @@ export default function ChatWindow({ roomId, roomType, roomTitle, roomAvatar, ro
   const typingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const isTypingActiveRef = useRef(false)
   const [recording, setRecording] = useState(false)
+  const [recordingPaused, setRecordingPaused] = useState(false)
   const [recordingSecs, setRecordingSecs] = useState(0)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const audioChunksRef = useRef<Blob[]>([])
@@ -301,11 +302,40 @@ export default function ChatWindow({ roomId, roomType, roomTitle, roomAvatar, ro
     }
   }
 
+  function cancelRecording() {
+    const mr = mediaRecorderRef.current
+    if (mr && mr.state !== 'inactive') {
+      mr.ondataavailable = null
+      mr.onstop = () => { mr.stream.getTracks().forEach(t => t.stop()) }
+      mr.stop()
+    }
+    mediaRecorderRef.current = null
+    if (recordingTimerRef.current) clearInterval(recordingTimerRef.current)
+    setRecording(false)
+    setRecordingPaused(false)
+    setRecordingSecs(0)
+  }
+
+  function togglePauseRecording() {
+    const mr = mediaRecorderRef.current
+    if (!mr) return
+    if (mr.state === 'recording') {
+      mr.pause()
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current)
+      setRecordingPaused(true)
+    } else if (mr.state === 'paused') {
+      mr.resume()
+      recordingTimerRef.current = setInterval(() => setRecordingSecs(s => s + 1), 1000)
+      setRecordingPaused(false)
+    }
+  }
+
   function stopRecording() {
     mediaRecorderRef.current?.stop()
     mediaRecorderRef.current = null
     if (recordingTimerRef.current) clearInterval(recordingTimerRef.current)
     setRecording(false)
+    setRecordingPaused(false)
     setRecordingSecs(0)
   }
 
@@ -551,7 +581,7 @@ export default function ChatWindow({ roomId, roomType, roomTitle, roomAvatar, ro
       {/* Messages scroll area */}
       <div
         ref={scrollRef}
-        className="flex-1 min-h-0 overflow-y-auto px-4 py-4 overscroll-contain"
+        className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-4 py-4 overscroll-contain"
         style={{ willChange: 'scroll-position', WebkitOverflowScrolling: 'touch' }}
       >
         {fetchError && (
@@ -669,10 +699,10 @@ export default function ChatWindow({ roomId, roomType, roomTitle, roomAvatar, ro
       {/* Recording indicator */}
       {recording && (
         <div className="px-4 py-2 bg-card border-t border-border flex items-center gap-3">
-          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-          <span className="text-sm text-primary">Recording… {recordingSecs}s</span>
-          <button onClick={stopRecording} className="ml-auto flex items-center gap-1.5 text-xs text-red-500 hover:opacity-80">
-            <Square size={12} fill="currentColor" /> Stop & Send
+          <span className={`w-2 h-2 rounded-full ${recordingPaused ? 'bg-yellow-500' : 'bg-red-500 animate-pulse'}`} />
+          <span className="text-sm text-primary">{recordingPaused ? 'Paused' : 'Recording…'} {recordingSecs}s</span>
+          <button onClick={cancelRecording} className="ml-auto flex items-center gap-1.5 text-xs text-red-500 hover:opacity-80">
+            <X size={12} /> Cancel
           </button>
         </div>
       )}
@@ -717,17 +747,17 @@ export default function ChatWindow({ roomId, roomType, roomTitle, roomAvatar, ro
         />
         {!body.trim() && !pendingFile && !editingMsg && (
           <button
-            onClick={recording ? stopRecording : startRecording}
-            className={`p-2 rounded-xl transition-colors ${recording ? 'bg-red-500 text-white animate-pulse' : 'text-muted hover:text-accent hover:bg-secondary/30'}`}
-            title={recording ? 'Stop recording' : 'Record voice message'}
+            onClick={recording ? togglePauseRecording : startRecording}
+            className={`p-2 rounded-xl transition-colors ${recording ? (recordingPaused ? 'bg-yellow-500 text-white' : 'bg-red-500 text-white animate-pulse') : 'text-muted hover:text-accent hover:bg-secondary/30'}`}
+            title={recording ? (recordingPaused ? 'Resume recording' : 'Pause recording') : 'Record voice message'}
           >
-            <Mic size={18} />
+            {recording ? (recordingPaused ? <Play size={18} /> : <Pause size={18} />) : <Mic size={18} />}
           </button>
         )}
         <motion.button
           whileTap={{ scale: 0.9 }}
-          onClick={editingMsg ? handleEdit : handleSend}
-          disabled={loading || (!body.trim() && !pendingFile)}
+          onClick={recording ? stopRecording : (editingMsg ? handleEdit : handleSend)}
+          disabled={loading || (!recording && !body.trim() && !pendingFile)}
           className="p-2 rounded-xl bg-cta text-cta-text hover:opacity-90 disabled:opacity-40 transition-opacity"
         >
           <Send size={18} />

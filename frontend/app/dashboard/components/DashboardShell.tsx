@@ -39,7 +39,7 @@ export default function DashboardShell({
   }
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <div className={`flex bg-background ${fullHeight ? 'h-screen overflow-hidden' : 'min-h-screen'}`}>
       <NotificationRealtimeListener />
       <Sidebar
         collapsed={collapsed}
@@ -48,7 +48,7 @@ export default function DashboardShell({
         activeItem={activeItem}
       />
 
-      <div className="flex min-h-screen flex-1 flex-col">
+      <div className={`flex flex-1 flex-col min-w-0 ${fullHeight ? 'h-full' : 'min-h-screen'}`}>
         <Header
           firstName={firstName}
           email={email}
@@ -59,7 +59,7 @@ export default function DashboardShell({
           userRole={userRole}
         />
 
-        <main className={fullHeight ? 'flex-1 overflow-hidden flex flex-col min-h-0' : 'flex-1 overflow-y-auto p-4 md:p-8'}>
+        <main className={fullHeight ? 'flex-1 overflow-hidden flex flex-col min-h-0 p-4 md:p-6' : 'flex-1 overflow-y-auto p-4 md:p-8'}>
           {fullHeight ? children : <PageTransition>{children}</PageTransition>}
         </main>
       </div>

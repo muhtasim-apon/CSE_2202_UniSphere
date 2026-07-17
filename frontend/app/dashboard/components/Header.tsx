@@ -4,9 +4,10 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Bell, GraduationCap, Megaphone, Menu, Settings, User, X } from 'lucide-react'
+import { Bell, Megaphone, Menu, Settings, User, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useNotifications } from '@/app/context/NotificationContext'
+import { useTheme } from '@/app/theme-provider'
 
 type HeaderProps = {
   firstName: string
@@ -44,6 +45,7 @@ export default function Header({
   signOutButton,
 }: HeaderProps) {
   const router = useRouter()
+  const { theme } = useTheme()
   const [profileOpen, setProfileOpen] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
   const { notifications, unreadCount, markAllRead, clearAll, markRead, removeNotification } = useNotifications()
@@ -170,8 +172,13 @@ export default function Header({
       </div>
 
       <div className="absolute left-1/2 flex -translate-x-1/2 items-center gap-2">
-        <GraduationCap className="h-6 w-6 text-primary" />
-        <span className="text-lg font-bold text-primary">EduHub</span>
+        <img
+          src={theme === 'dark'
+            ? 'https://mftrlabicbiixlgprdbi.supabase.co/storage/v1/object/public/logos/logo_dark.png'
+            : 'https://mftrlabicbiixlgprdbi.supabase.co/storage/v1/object/public/logos/logo_light.png'}
+          alt="UniVerse"
+          className="h-14 w-auto"
+        />
       </div>
 
       <div className="relative">

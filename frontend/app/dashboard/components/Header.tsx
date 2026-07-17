@@ -51,7 +51,7 @@ export default function Header({
   const { notifications, unreadCount, markAllRead, clearAll, markRead, removeNotification } = useNotifications()
 
   return (
-    <header className="flex items-center justify-between border-b border-border bg-card px-4 py-3 md:px-6">
+    <header className="flex items-center justify-between border-b border-border bg-[#fefefe] dark:bg-[#0c121f] px-4 py-3 md:px-6">
       <div className="flex items-center gap-3">
         <button
           type="button"

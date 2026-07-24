@@ -253,7 +253,7 @@ export default function AddHackathonModal({ token, onClose, onSuccess }: Props) 
 
         <div className="mt-6 flex justify-end gap-3">
           <button onClick={onClose} className="rounded-xl border border-border bg-card px-4 py-2 text-sm font-semibold text-text-muted transition hover:border-primary hover:text-primary">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="rounded-xl bg-primary px-6 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60">
+          <button onClick={handleSave} disabled={saving} className="rounded-xl bg-cta px-6 py-2 text-sm font-semibold text-cta-text transition hover:opacity-90 disabled:opacity-60">
             {saving ? 'Saving…' : 'Save'}
           </button>
         </div>

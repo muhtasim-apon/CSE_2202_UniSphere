@@ -16,7 +16,7 @@ ifeq ($(OS),Windows_NT)
     # Paths relative to project root (used for install)
     PIP         := backend/venv/Scripts/pip.exe
     # Path relative to backend/ dir (used after "cd backend &&")
-    UVICORN     := venv\Scripts\uvicorn.exe
+    UVICORN     := venv/Scripts/uvicorn.exe
     # npm.cmd avoids the "C:/Program Files/nodejs/npm" spaces issue
     NPM         := npm.cmd
     MKDIR       := mkdir

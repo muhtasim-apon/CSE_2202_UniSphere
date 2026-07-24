@@ -164,7 +164,7 @@ export default function NoticeBoard() {
             onClick={() => handleCategoryChange(key)}
             className={`flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-medium transition ${
               activeCategory === key
-                ? 'bg-primary text-white'
+                ? 'bg-cta text-cta-text'
                 : 'bg-card border border-border text-text-muted hover:text-primary hover:border-primary'
             }`}
           >
@@ -220,7 +220,7 @@ export default function NoticeBoard() {
       {/* Floating Add Post button */}
       <button
         onClick={openNewPost}
-        className="fixed bottom-6 right-6 z-30 flex items-center gap-2 rounded-2xl bg-primary px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:opacity-90 hover:shadow-xl active:scale-95"
+        className="fixed bottom-6 right-6 z-30 flex items-center gap-2 rounded-2xl bg-cta px-5 py-3 text-sm font-semibold text-cta-text shadow-lg transition hover:opacity-90 hover:shadow-xl active:scale-95"
       >
         <Plus className="h-4 w-4" />
         Add a Post

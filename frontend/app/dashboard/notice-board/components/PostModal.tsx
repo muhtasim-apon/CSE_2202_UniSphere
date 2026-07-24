@@ -204,7 +204,7 @@ export default function PostModal({ open, onClose, token, userRole, editData, on
                       onClick={() => setCategory(key)}
                       className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition ${
                         category === key
-                          ? 'border-primary bg-primary text-white'
+                          ? 'border-primary bg-cta text-cta-text'
                           : 'border-border text-text-muted hover:border-primary hover:text-primary'
                       }`}
                     >
@@ -231,7 +231,7 @@ export default function PostModal({ open, onClose, token, userRole, editData, on
                       disabled={teacherOnly && userRole !== 'teacher'}
                       className={`rounded-full border px-3 py-1.5 text-sm transition disabled:cursor-not-allowed disabled:opacity-40 ${
                         audience === key
-                          ? 'border-primary bg-primary text-white'
+                          ? 'border-primary bg-cta text-cta-text'
                           : 'border-border text-text-muted hover:border-primary hover:text-primary'
                       }`}
                     >
@@ -406,7 +406,7 @@ export default function PostModal({ open, onClose, token, userRole, editData, on
                   type="button"
                   onClick={handleSubmit}
                   disabled={submitting}
-                  className="rounded-xl bg-primary px-6 py-2.5 text-sm font-semibold text-white transition hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
+                  className="rounded-xl bg-cta px-6 py-2.5 text-sm font-semibold text-cta-text transition hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
                 >
                   {submitting ? 'Posting…' : editData ? 'Save changes' : 'Post'}
                 </button>

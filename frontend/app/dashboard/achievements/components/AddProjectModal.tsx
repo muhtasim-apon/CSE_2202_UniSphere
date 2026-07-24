@@ -327,11 +327,11 @@ export default function AddProjectModal({ token, onClose, onSuccess }: Props) {
               </button>
             )}
             {step === 1 ? (
-              <button onClick={() => { if (!title.trim()) { setError('Project name is required'); return } setError(''); setStep(2) }} className="rounded-xl bg-primary px-6 py-2 text-sm font-semibold text-white transition hover:opacity-90">
+              <button onClick={() => { if (!title.trim()) { setError('Project name is required'); return } setError(''); setStep(2) }} className="rounded-xl bg-cta px-6 py-2 text-sm font-semibold text-cta-text transition hover:opacity-90">
                 Next
               </button>
             ) : (
-              <button onClick={handleSave} disabled={saving} className="rounded-xl bg-primary px-6 py-2 text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-60">
+              <button onClick={handleSave} disabled={saving} className="rounded-xl bg-cta px-6 py-2 text-sm font-semibold text-cta-text transition hover:opacity-90 disabled:opacity-60">
                 {saving ? 'Saving…' : 'Save'}
               </button>
             )}

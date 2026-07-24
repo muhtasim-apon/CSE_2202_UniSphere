@@ -60,7 +60,7 @@ export default function StudentsPanel({ token, courseId, joinLinkToken, role }: 
         {role === 'teacher' && (
           <button
             onClick={() => setShowAddModal(true)}
-            className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 transition"
+            className="flex items-center gap-1.5 rounded-xl bg-cta px-3 py-1.5 text-xs font-semibold text-cta-text hover:opacity-90 transition"
           >
             <UserPlus className="h-3.5 w-3.5" />
             Add Students
@@ -100,7 +100,7 @@ export default function StudentsPanel({ token, courseId, joinLinkToken, role }: 
                 transition={{ duration: 0.18 }}
                 className="flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 hover:border-accent/40 transition"
               >
-                <div className="h-9 w-9 rounded-full bg-primary flex items-center justify-center text-xs font-bold text-white flex-shrink-0">
+                <div className="h-9 w-9 rounded-full bg-cta flex items-center justify-center text-xs font-bold text-cta-text flex-shrink-0">
                   {initials(s.first_name, s.last_name)}
                 </div>
                 <div className="flex-1 min-w-0">

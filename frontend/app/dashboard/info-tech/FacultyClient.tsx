@@ -286,7 +286,7 @@ function ChairmanCard({
             )}
           </div>
 
-          <button className="mt-4 flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white hover:opacity-90 transition">
+          <button className="mt-4 flex items-center gap-2 rounded-xl bg-cta px-4 py-2 text-sm font-semibold text-cta-text hover:opacity-90 transition">
             View Full Profile <ChevronRight className="h-4 w-4" />
           </button>
         </div>
@@ -496,7 +496,7 @@ function DetailPanel({
             <p className="text-sm">{error}</p>
             <button
               onClick={onRetry}
-              className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white hover:opacity-90 transition"
+              className="rounded-xl bg-cta px-4 py-2 text-sm font-semibold text-cta-text hover:opacity-90 transition"
             >
               Retry
             </button>
@@ -820,7 +820,7 @@ export default function FacultyClient() {
             onClick={() => setSelectedRank('All')}
             className={`rounded-xl px-3 py-1.5 text-xs font-medium transition ${
               selectedRank === 'All'
-                ? 'bg-primary text-white'
+                ? 'bg-cta text-cta-text'
                 : 'border border-border bg-card text-text-muted hover:border-primary hover:text-primary'
             }`}
           >
@@ -878,7 +878,7 @@ export default function FacultyClient() {
             href="https://www.du.ac.bd/body/FacultyMembers/CSE"
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-white hover:opacity-90 transition"
+            className="inline-flex items-center gap-2 rounded-xl bg-cta px-5 py-2.5 text-sm font-semibold text-cta-text hover:opacity-90 transition"
           >
             View on DU website <ExternalLink className="h-4 w-4" />
           </a>

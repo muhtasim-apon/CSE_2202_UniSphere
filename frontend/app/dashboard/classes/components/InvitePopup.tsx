@@ -116,7 +116,7 @@ export default function InvitePopup({ token, onCourseJoined }: Props) {
                     <button
                       onClick={() => handleJoin(invite)}
                       disabled={joining === invite.invite_id}
-                      className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-xs font-semibold text-white hover:opacity-90 transition disabled:opacity-60"
+                      className="flex items-center gap-1.5 rounded-xl bg-cta px-4 py-2 text-xs font-semibold text-cta-text hover:opacity-90 transition disabled:opacity-60"
                     >
                       {joining === invite.invite_id ? 'Joining…' : 'Join Class →'}
                     </button>

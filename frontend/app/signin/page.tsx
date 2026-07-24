@@ -44,7 +44,12 @@ export default function SignInPage() {
             <input className={inputClass} type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
           </div>
           <div>
-            <label className={labelClass}>Password</label>
+            <div className="flex items-center justify-between">
+              <label className={labelClass}>Password</label>
+              <Link href="/forgot-password" className="mb-1 text-xs font-semibold text-accent hover:text-highlight">
+                Forgot password?
+              </Link>
+            </div>
             <input className={inputClass} type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
           </div>
 

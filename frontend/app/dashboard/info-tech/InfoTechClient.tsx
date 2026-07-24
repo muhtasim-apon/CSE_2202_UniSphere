@@ -156,7 +156,7 @@ export default function InfoTechClient({ articles }: { articles: Article[] }) {
             <span className="text-sm font-medium text-text-primary">New articles available</span>
             <button
               onClick={handleRefresh}
-              className="rounded-lg bg-primary px-3 py-1 text-xs font-semibold text-white hover:opacity-90"
+              className="rounded-lg bg-cta px-3 py-1 text-xs font-semibold text-cta-text hover:opacity-90"
             >
               Refresh
             </button>
@@ -217,7 +217,7 @@ export default function InfoTechClient({ articles }: { articles: Article[] }) {
           onClick={() => setActiveTab('blogs')}
           className={`flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-all duration-200 ${
             activeTab === 'blogs'
-              ? 'bg-primary text-white shadow-sm'
+              ? 'bg-cta text-cta-text shadow-sm'
               : 'text-text-muted hover:text-primary'
           }`}
         >
@@ -228,7 +228,7 @@ export default function InfoTechClient({ articles }: { articles: Article[] }) {
           onClick={() => setActiveTab('faculty')}
           className={`flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-all duration-200 ${
             activeTab === 'faculty'
-              ? 'bg-primary text-white shadow-sm'
+              ? 'bg-cta text-cta-text shadow-sm'
               : 'text-text-muted hover:text-primary'
           }`}
         >
@@ -346,7 +346,7 @@ export default function InfoTechClient({ articles }: { articles: Article[] }) {
                 onClick={() => { setSelectedCategories(new Set()); setVisibleCount(15) }}
                 className={`rounded-xl px-3 py-1.5 text-xs font-medium transition ${
                   selectedCategories.size === 0
-                    ? 'bg-primary text-white'
+                    ? 'bg-cta text-cta-text'
                     : 'border border-border bg-card text-text-muted hover:border-primary hover:text-primary'
                 }`}
               >
@@ -374,7 +374,7 @@ export default function InfoTechClient({ articles }: { articles: Article[] }) {
                   onClick={() => toggleSource(src)}
                   className={`rounded-full px-3 py-1 text-xs font-medium transition ${
                     selectedSources.has(src)
-                      ? 'bg-primary text-white'
+                      ? 'bg-cta text-cta-text'
                       : 'border border-border bg-card text-text-muted hover:border-primary hover:text-primary'
                   }`}
                 >
@@ -472,7 +472,7 @@ export default function InfoTechClient({ articles }: { articles: Article[] }) {
                         href={heroArticle.url}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
+                        className="flex items-center gap-2 rounded-xl bg-cta px-4 py-2 text-sm font-semibold text-cta-text transition hover:opacity-90"
                       >
                         Open Article <ExternalLink className="h-4 w-4" />
                       </a>
@@ -562,7 +562,7 @@ export default function InfoTechClient({ articles }: { articles: Article[] }) {
                             href={article.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-[11px] font-semibold text-white transition hover:opacity-90 active:scale-95"
+                            className="flex items-center gap-1 rounded-lg bg-cta px-3 py-1.5 text-[11px] font-semibold text-cta-text transition hover:opacity-90 active:scale-95"
                           >
                             Read Article <ExternalLink className="h-3 w-3" />
                           </a>
@@ -581,7 +581,7 @@ export default function InfoTechClient({ articles }: { articles: Article[] }) {
               {visibleCount < filtered.length && (
                 <button
                   onClick={() => setVisibleCount(v => v + 15)}
-                  className="w-full rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
+                  className="w-full rounded-xl bg-cta px-4 py-2.5 text-sm font-semibold text-cta-text transition hover:opacity-90"
                 >
                   Load more ({filtered.length - visibleCount} remaining)
                 </button>

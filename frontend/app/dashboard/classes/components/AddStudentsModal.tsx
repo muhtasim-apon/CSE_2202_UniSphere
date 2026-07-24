@@ -130,7 +130,7 @@ export default function AddStudentsModal({ token, courseId, joinLinkToken, onClo
                       className={`rounded-xl border p-3 transition ${isAdded ? 'border-emerald-200 bg-emerald-50 dark:bg-emerald-950/20' : 'border-border bg-card hover:border-accent/40'}`}
                     >
                       <div className="flex items-center gap-3">
-                        <div className="h-9 w-9 rounded-full bg-primary flex items-center justify-center text-xs font-bold text-white flex-shrink-0">
+                        <div className="h-9 w-9 rounded-full bg-cta flex items-center justify-center text-xs font-bold text-cta-text flex-shrink-0">
                           {initials(s.first_name, s.last_name)}
                         </div>
                         <div className="flex-1 min-w-0">
@@ -149,7 +149,7 @@ export default function AddStudentsModal({ token, courseId, joinLinkToken, onClo
                                 ? 'bg-emerald-100 text-emerald-700 cursor-default'
                                 : st === 'adding'
                                 ? 'bg-primary/20 text-primary/60 cursor-wait'
-                                : 'bg-primary text-white hover:opacity-90'
+                                : 'bg-cta text-cta-text hover:opacity-90'
                             }`}
                           >
                             {isAdded ? <><Check className="h-3 w-3" /> Enrolled</> : <><UserPlus className="h-3 w-3" /> Add</>}

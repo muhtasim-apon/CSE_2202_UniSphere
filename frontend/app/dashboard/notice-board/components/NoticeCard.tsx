@@ -177,7 +177,7 @@ export default function NoticeCard({ notice, currentUserId, token, onEdit, onDel
       {/* Author row */}
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary text-sm font-semibold text-white">
+          <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center overflow-hidden rounded-full bg-cta text-sm font-semibold text-cta-text">
             {notice.author_avatar ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={notice.author_avatar} alt={notice.author_name} className="h-full w-full object-cover" />
@@ -375,7 +375,7 @@ export default function NoticeCard({ notice, currentUserId, token, onEdit, onDel
       {/* Footer */}
       <div className="flex items-center justify-between border-t border-border-subtle pt-3">
         <div className="flex items-center gap-2">
-          <div className="flex h-6 w-6 items-center justify-center overflow-hidden rounded-full bg-primary text-[10px] font-semibold text-white">
+          <div className="flex h-6 w-6 items-center justify-center overflow-hidden rounded-full bg-cta text-[10px] font-semibold text-cta-text">
             {notice.author_avatar ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={notice.author_avatar} alt="" className="h-full w-full object-cover" />

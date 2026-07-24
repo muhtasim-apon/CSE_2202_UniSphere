@@ -17,10 +17,10 @@ type Props = {
 }
 
 const STATUS_STYLES: Record<string, string> = {
-  Present: 'bg-emerald-100 text-emerald-700',
-  Absent:  'bg-red-100 text-red-700',
-  Late:    'bg-amber-100 text-amber-700',
-  Excused: 'bg-blue-100 text-blue-700',
+  Present: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
+  Absent:  'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300',
+  Late:    'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
+  Excused: 'bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300',
 }
 const STATUSES = ['Present', 'Absent', 'Late', 'Excused'] as const
 
@@ -96,11 +96,11 @@ function TeacherView({ token, courseId }: { token: string; courseId: number }) {
             <input className={inputClass} value={topic} onChange={e => setTopic(e.target.value)} placeholder="Normalization" />
           </div>
         </div>
-        {formError && <p className="text-xs text-red-600">{formError}</p>}
+        {formError && <p className="text-xs text-red-600 dark:text-red-300">{formError}</p>}
         <button
           onClick={startSession}
           disabled={saving}
-          className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-60"
+          className="flex items-center gap-1.5 rounded-xl bg-cta px-4 py-2 text-sm font-semibold text-cta-text hover:opacity-90 transition disabled:opacity-60"
         >
           <Plus className="h-4 w-4" />
           {saving ? 'Starting…' : 'Start Session & Mark Attendance'}
@@ -139,10 +139,10 @@ function TeacherView({ token, courseId }: { token: string; courseId: number }) {
                       {s.topic && s.session_title && <p className="text-xs text-muted">{s.topic}</p>}
                     </div>
                     <div className="flex items-center gap-2 text-xs flex-shrink-0">
-                      <span className="rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 font-semibold">{sm.present}P</span>
-                      <span className="rounded-full bg-red-100 text-red-700 px-2 py-0.5 font-semibold">{sm.absent}A</span>
-                      {sm.late > 0 && <span className="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 font-semibold">{sm.late}L</span>}
-                      {sm.excused > 0 && <span className="rounded-full bg-blue-100 text-blue-700 px-2 py-0.5 font-semibold">{sm.excused}E</span>}
+                      <span className="rounded-full bg-emerald-100 text-emerald-700 px-2 py-0.5 font-semibold dark:bg-emerald-500/15 dark:text-emerald-300">{sm.present}P</span>
+                      <span className="rounded-full bg-red-100 text-red-700 px-2 py-0.5 font-semibold dark:bg-red-500/15 dark:text-red-300">{sm.absent}A</span>
+                      {sm.late > 0 && <span className="rounded-full bg-amber-100 text-amber-700 px-2 py-0.5 font-semibold dark:bg-amber-500/15 dark:text-amber-300">{sm.late}L</span>}
+                      {sm.excused > 0 && <span className="rounded-full bg-blue-100 text-blue-700 px-2 py-0.5 font-semibold dark:bg-blue-500/15 dark:text-blue-300">{sm.excused}E</span>}
                       <span className="text-muted">{sm.total} total</span>
                     </div>
                     {open ? <ChevronUp className="h-4 w-4 text-muted flex-shrink-0" /> : <ChevronDown className="h-4 w-4 text-muted flex-shrink-0" />}
@@ -234,10 +234,10 @@ function StudentView({ token }: { token: string }) {
         const low = pct < 75 && c.total_sessions > 0
 
         return (
-          <div key={c.course_id} className={`rounded-xl border overflow-hidden ${low ? 'border-red-200' : 'border-border'}`}>
+          <div key={c.course_id} className={`rounded-xl border overflow-hidden ${low ? 'border-red-200 dark:border-red-500/30' : 'border-border'}`}>
             <button
               onClick={() => setExpandedCourse(open ? null : c.course_id)}
-              className={`w-full text-left px-4 py-3 hover:bg-accent/5 transition ${low ? 'bg-red-50' : 'bg-card'}`}
+              className={`w-full text-left px-4 py-3 hover:bg-accent/5 transition ${low ? 'bg-red-50 dark:bg-red-500/10' : 'bg-card'}`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
@@ -249,7 +249,7 @@ function StudentView({ token }: { token: string }) {
                   {c.semester && <p className="text-xs text-muted mt-0.5">{c.semester}</p>}
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className={`text-sm font-bold ${low ? 'text-red-600' : 'text-emerald-600'}`}>{pct}%</span>
+                  <span className={`text-sm font-bold ${low ? 'text-red-600 dark:text-red-300' : 'text-emerald-600 dark:text-emerald-300'}`}>{pct}%</span>
                   {open ? <ChevronUp className="h-4 w-4 text-muted" /> : <ChevronDown className="h-4 w-4 text-muted" />}
                 </div>
               </div>
@@ -259,13 +259,13 @@ function StudentView({ token }: { token: string }) {
               </div>
 
               <div className="mt-2 flex gap-3 text-xs">
-                <span className="text-emerald-700">✓ {c.present} Present</span>
-                <span className="text-red-700">✗ {c.absent} Absent</span>
-                {c.late > 0 && <span className="text-amber-700">◐ {c.late} Late</span>}
-                {c.excused > 0 && <span className="text-blue-700">~ {c.excused} Excused</span>}
+                <span className="text-emerald-700 dark:text-emerald-300">✓ {c.present} Present</span>
+                <span className="text-red-700 dark:text-red-300">✗ {c.absent} Absent</span>
+                {c.late > 0 && <span className="text-amber-700 dark:text-amber-300">◐ {c.late} Late</span>}
+                {c.excused > 0 && <span className="text-blue-700 dark:text-blue-300">~ {c.excused} Excused</span>}
                 <span className="text-muted">{c.total_sessions} total</span>
               </div>
-              {low && <p className="mt-1 text-xs text-red-600 font-medium">⚠ Attendance below 75%</p>}
+              {low && <p className="mt-1 text-xs text-red-600 dark:text-red-300 font-medium">⚠ Attendance below 75%</p>}
             </button>
 
             {open && (
@@ -296,7 +296,7 @@ function StudentView({ token }: { token: string }) {
                                 {s.status}
                               </span>
                             ) : (
-                              <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-gray-100 text-gray-500">—</span>
+                              <span className="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-gray-100 text-gray-500 dark:bg-gray-500/15 dark:text-gray-400">—</span>
                             )}
                           </td>
                         </tr>

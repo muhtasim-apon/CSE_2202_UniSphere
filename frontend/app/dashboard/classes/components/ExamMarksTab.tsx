@@ -21,31 +21,36 @@ type Props = {
 const EXAM_TYPES = ['Midterm', 'Final', 'Quiz', 'Assignment', 'Lab', 'Viva', 'Presentation', 'Other']
 
 const EXAM_TYPE_COLORS: Record<string, string> = {
-  Midterm:      'bg-blue-100 text-blue-700',
-  Final:        'bg-purple-100 text-purple-700',
-  Quiz:         'bg-emerald-100 text-emerald-700',
-  Assignment:   'bg-amber-100 text-amber-700',
-  Lab:          'bg-cyan-100 text-cyan-700',
-  Viva:         'bg-pink-100 text-pink-700',
-  Presentation: 'bg-indigo-100 text-indigo-700',
-  Other:        'bg-gray-100 text-gray-700',
+  Midterm:      'bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300',
+  Final:        'bg-purple-100 text-purple-700 dark:bg-purple-500/15 dark:text-purple-300',
+  Quiz:         'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
+  Assignment:   'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300',
+  Lab:          'bg-cyan-100 text-cyan-700 dark:bg-cyan-500/15 dark:text-cyan-300',
+  Viva:         'bg-pink-100 text-pink-700 dark:bg-pink-500/15 dark:text-pink-300',
+  Presentation: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300',
+  Other:        'bg-gray-100 text-gray-700 dark:bg-gray-500/15 dark:text-gray-300',
 }
 
 const GRADE_LEGEND = [
-  ['A+','≥80%','bg-emerald-100 text-emerald-700'],['A','≥75%','bg-emerald-100 text-emerald-700'],
-  ['A-','≥70%','bg-green-100 text-green-700'],['B+','≥65%','bg-blue-100 text-blue-700'],
-  ['B','≥60%','bg-blue-100 text-blue-700'],['B-','≥55%','bg-blue-100 text-blue-700'],
-  ['C+','≥50%','bg-amber-100 text-amber-700'],['C','≥45%','bg-amber-100 text-amber-700'],
-  ['D','≥40%','bg-orange-100 text-orange-700'],['F','<40%','bg-red-100 text-red-700'],
+  ['A+','≥80%','bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'],
+  ['A','≥75%','bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'],
+  ['A-','≥70%','bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-300'],
+  ['B+','≥65%','bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300'],
+  ['B','≥60%','bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300'],
+  ['B-','≥55%','bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300'],
+  ['C+','≥50%','bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'],
+  ['C','≥45%','bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'],
+  ['D','≥40%','bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300'],
+  ['F','<40%','bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300'],
 ]
 
 function GradeChip({ grade }: { grade?: string | null }) {
   if (!grade) return null
-  const cls = grade.startsWith('A') ? 'bg-emerald-100 text-emerald-700'
-    : grade.startsWith('B') ? 'bg-blue-100 text-blue-700'
-    : grade.startsWith('C') ? 'bg-amber-100 text-amber-700'
-    : grade === 'D' ? 'bg-orange-100 text-orange-700'
-    : 'bg-red-100 text-red-700'
+  const cls = grade.startsWith('A') ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+    : grade.startsWith('B') ? 'bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300'
+    : grade.startsWith('C') ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300'
+    : grade === 'D' ? 'bg-orange-100 text-orange-700 dark:bg-orange-500/15 dark:text-orange-300'
+    : 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300'
   return <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${cls}`}>{grade}</span>
 }
 
@@ -86,7 +91,7 @@ function AddExamModal({ token, courseId, creditHoursDefault, onClose, onSuccess 
     <div className="fixed inset-0 z-50 flex items-center justify-center backdrop-blur-sm bg-black/40">
       <div className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-card p-6 shadow-xl">
         <h2 className="font-display text-lg font-bold text-text-primary mb-4">Add Exam</h2>
-        {error && <p className="mb-3 rounded-xl bg-red-50 px-4 py-2 text-sm text-red-600">{error}</p>}
+        {error && <p className="mb-3 rounded-xl bg-red-50 px-4 py-2 text-sm text-red-600 dark:bg-red-500/10 dark:text-red-300">{error}</p>}
         <div className="space-y-3">
           <div><label className={labelClass}>Exam Name *</label><input className={inputClass} value={examName} onChange={e => setExamName(e.target.value)} placeholder="Midterm 2026" /></div>
           <div className="grid grid-cols-2 gap-3">
@@ -106,7 +111,7 @@ function AddExamModal({ token, courseId, creditHoursDefault, onClose, onSuccess 
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-xl border border-border px-4 py-2 text-sm font-semibold text-muted hover:border-primary hover:text-primary transition">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-60">{saving ? 'Saving…' : 'Save'}</button>
+          <button onClick={handleSave} disabled={saving} className="rounded-xl bg-cta px-5 py-2 text-sm font-semibold text-cta-text hover:opacity-90 transition disabled:opacity-60">{saving ? 'Saving…' : 'Save'}</button>
         </div>
       </div>
     </div>
@@ -172,7 +177,7 @@ function TeacherView({ token, courseId, creditHours = 3, onMarkSaved }: {
         <button onClick={() => setShowLegend(x => !x)} className="flex items-center gap-1.5 rounded-xl border border-border px-3 py-1.5 text-xs font-semibold text-muted hover:border-primary hover:text-primary transition">
           <Info className="h-3.5 w-3.5" /> Grade Scale
         </button>
-        <button onClick={() => setShowAdd(true)} className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 transition">
+        <button onClick={() => setShowAdd(true)} className="flex items-center gap-1.5 rounded-xl bg-cta px-3 py-1.5 text-xs font-semibold text-cta-text hover:opacity-90 transition">
           <Plus className="h-3.5 w-3.5" /> Add Exam
         </button>
       </div>
@@ -197,7 +202,7 @@ function TeacherView({ token, courseId, creditHours = 3, onMarkSaved }: {
         Object.entries(grouped).map(([type, typeExams]) => (
           <div key={type} className="space-y-2">
             <div className="flex items-center gap-2">
-              <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${EXAM_TYPE_COLORS[type] || 'bg-gray-100 text-gray-700'}`}>{type}</span>
+              <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${EXAM_TYPE_COLORS[type] || 'bg-gray-100 text-gray-700 dark:bg-gray-500/15 dark:text-gray-300'}`}>{type}</span>
               <div className="flex-1 h-px bg-border" />
             </div>
 
@@ -262,7 +267,7 @@ function TeacherView({ token, courseId, creditHours = 3, onMarkSaved }: {
                                       onClick={() => saveMark(exam.exam_id, stu.student_id)}
                                       disabled={inp.saving || inp.saved || !inp.val}
                                       className={`flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition whitespace-nowrap ${
-                                        inp.saved ? 'bg-emerald-100 text-emerald-700' : 'bg-primary text-white hover:opacity-90'
+                                        inp.saved ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300' : 'bg-cta text-cta-text hover:opacity-90'
                                       } disabled:opacity-50`}
                                     >
                                       <Save className="h-3 w-3" />
@@ -341,7 +346,7 @@ function StudentView({ token }: { token: string }) {
                   <div className="flex gap-2 mt-1 flex-wrap">
                     {c.semester && <span className="text-xs text-muted">{c.semester}</span>}
                     {totalExams > 0 && <span className="text-xs text-muted">{totalExams} exam{totalExams !== 1 ? 's' : ''}</span>}
-                    {types.map(t => <span key={t} className={`text-xs rounded-full px-2 py-0.5 font-medium ${EXAM_TYPE_COLORS[t] || 'bg-gray-100 text-gray-700'}`}>{t}</span>)}
+                    {types.map(t => <span key={t} className={`text-xs rounded-full px-2 py-0.5 font-medium ${EXAM_TYPE_COLORS[t] || 'bg-gray-100 text-gray-700 dark:bg-gray-500/15 dark:text-gray-300'}`}>{t}</span>)}
                   </div>
                 </div>
                 {open ? <ChevronUp className="h-4 w-4 text-muted flex-shrink-0" /> : <ChevronDown className="h-4 w-4 text-muted flex-shrink-0" />}
@@ -356,7 +361,7 @@ function StudentView({ token }: { token: string }) {
                   Object.entries(c.by_type).map(([type, marks]) => (
                     <div key={type} className="px-4 py-3">
                       <div className="flex items-center gap-2 mb-2">
-                        <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${EXAM_TYPE_COLORS[type] || 'bg-gray-100 text-gray-700'}`}>{type}</span>
+                        <span className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${EXAM_TYPE_COLORS[type] || 'bg-gray-100 text-gray-700 dark:bg-gray-500/15 dark:text-gray-300'}`}>{type}</span>
                       </div>
                       <div className="space-y-1.5">
                         {(marks as StudentMarkEntry[]).map((m, idx) => (

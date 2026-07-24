@@ -150,7 +150,7 @@ function CreateCourseModal({ token, onClose, onSuccess }: { token: string; onClo
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-xl border border-border px-4 py-2 text-sm font-semibold text-muted hover:border-primary hover:text-primary transition">Cancel</button>
-          <button onClick={handleCreate} disabled={saving} className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-60">
+          <button onClick={handleCreate} disabled={saving} className="rounded-xl bg-cta px-5 py-2 text-sm font-semibold text-cta-text hover:opacity-90 transition disabled:opacity-60">
             {saving ? 'Creating…' : 'Create Course'}
           </button>
         </div>
@@ -188,7 +188,7 @@ function JoinCourseModal({ token, onClose, onSuccess }: { token: string; onClose
           <h2 className="font-display text-lg font-bold text-text-primary">Joined!</h2>
           <p className="text-sm text-muted mt-1">{joined.course_name}</p>
           {joined.instructor && <p className="text-xs text-muted mt-0.5">Instructor: {joined.instructor}</p>}
-          <button onClick={() => { onSuccess(); onClose() }} className="mt-4 rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-white hover:opacity-90 transition">Done</button>
+          <button onClick={() => { onSuccess(); onClose() }} className="mt-4 rounded-xl bg-cta px-5 py-2 text-sm font-semibold text-cta-text hover:opacity-90 transition">Done</button>
         </div>
       </div>
     )
@@ -205,7 +205,7 @@ function JoinCourseModal({ token, onClose, onSuccess }: { token: string; onClose
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-xl border border-border px-4 py-2 text-sm font-semibold text-muted hover:border-primary hover:text-primary transition">Cancel</button>
-          <button onClick={handleJoin} disabled={saving} className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-60">
+          <button onClick={handleJoin} disabled={saving} className="rounded-xl bg-cta px-5 py-2 text-sm font-semibold text-cta-text hover:opacity-90 transition disabled:opacity-60">
             {saving ? 'Joining…' : 'Join Course'}
           </button>
         </div>
@@ -298,7 +298,7 @@ function CourseDetail({ token, course, role, userId, onBack }: {
               key={t.id}
               onClick={() => setActiveTab(t.id)}
               className={`rounded-lg px-4 py-2 text-sm font-semibold transition-all ${
-                activeTab === t.id ? 'bg-primary text-white shadow-sm' : 'text-muted hover:text-primary'
+                activeTab === t.id ? 'bg-cta text-cta-text shadow-sm' : 'text-muted hover:text-primary'
               }`}
             >
               {t.label}
@@ -438,11 +438,11 @@ export default function ManualCoursesTab({ token, role, userId, onCourseSelect }
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-base font-semibold text-text-primary">My Courses</h2>
         {role === 'teacher' ? (
-          <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 transition">
+          <button onClick={() => setShowCreate(true)} className="flex items-center gap-1.5 rounded-xl bg-cta px-3 py-1.5 text-xs font-semibold text-cta-text hover:opacity-90 transition">
             <Plus className="h-3.5 w-3.5" /> Create Course
           </button>
         ) : (
-          <button onClick={() => setShowJoin(true)} className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 transition">
+          <button onClick={() => setShowJoin(true)} className="flex items-center gap-1.5 rounded-xl bg-cta px-3 py-1.5 text-xs font-semibold text-cta-text hover:opacity-90 transition">
             <Plus className="h-3.5 w-3.5" /> Join Course
           </button>
         )}

@@ -163,7 +163,7 @@ function UploadModal({ token, courseId, onClose, onSuccess }: { token: string; c
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-xl border border-border px-4 py-2 text-sm font-semibold text-muted hover:border-primary hover:text-primary transition">Cancel</button>
-          <button onClick={handleUpload} disabled={uploadPct !== null} className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-60">
+          <button onClick={handleUpload} disabled={uploadPct !== null} className="rounded-xl bg-cta px-5 py-2 text-sm font-semibold text-cta-text hover:opacity-90 transition disabled:opacity-60">
             {uploadPct !== null ? `${uploadPct}%` : 'Upload'}
           </button>
         </div>
@@ -223,7 +223,7 @@ function LinkModal({ token, courseId, onClose, onSuccess }: { token: string; cou
         </div>
         <div className="mt-5 flex justify-end gap-2">
           <button onClick={onClose} className="rounded-xl border border-border px-4 py-2 text-sm font-semibold text-muted hover:border-primary hover:text-primary transition">Cancel</button>
-          <button onClick={handleSave} disabled={saving} className="rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-60">
+          <button onClick={handleSave} disabled={saving} className="rounded-xl bg-cta px-5 py-2 text-sm font-semibold text-cta-text hover:opacity-90 transition disabled:opacity-60">
             {saving ? 'Saving…' : 'Add Link'}
           </button>
         </div>
@@ -292,7 +292,7 @@ export default function ResourcesPanel({ token, courseId, role, userId }: Props)
             <button onClick={() => setShowLink(true)} className="flex items-center gap-1.5 rounded-xl border border-border px-3 py-1.5 text-xs font-semibold text-muted hover:border-primary hover:text-primary transition">
               <Link2 className="h-3.5 w-3.5" /> Add Link
             </button>
-            <button onClick={() => setShowUpload(true)} className="flex items-center gap-1.5 rounded-xl bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:opacity-90 transition">
+            <button onClick={() => setShowUpload(true)} className="flex items-center gap-1.5 rounded-xl bg-cta px-3 py-1.5 text-xs font-semibold text-cta-text hover:opacity-90 transition">
               <Upload className="h-3.5 w-3.5" /> Upload File
             </button>
           </div>

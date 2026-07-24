@@ -23,6 +23,9 @@ const config: Config = {
         'border-subtle': 'var(--color-border)',
         notification: '#F43F5E',
         success: 'var(--color-highlight)',
+        warning: '#D97706',
+        danger: '#DC2626',
+        information: 'var(--color-secondary)',
         'primary-light': 'var(--color-accent-tint)',
       },
       fontFamily: {

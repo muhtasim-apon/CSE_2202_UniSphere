@@ -4,10 +4,9 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Bell, Megaphone, Menu, Settings, User, X } from 'lucide-react'
+import { Bell, Megaphone, Menu, User, X } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useNotifications } from '@/app/context/NotificationContext'
-import { useTheme } from '@/app/theme-provider'
 
 type HeaderProps = {
   firstName: string
@@ -45,19 +44,37 @@ export default function Header({
   signOutButton,
 }: HeaderProps) {
   const router = useRouter()
-  const { theme } = useTheme()
   const [profileOpen, setProfileOpen] = useState(false)
   const [notifOpen, setNotifOpen] = useState(false)
   const { notifications, unreadCount, markAllRead, clearAll, markRead, removeNotification } = useNotifications()
 
   return (
-    <header className="flex items-center justify-between border-b border-border bg-[#fefefe] dark:bg-[#0c121f] px-4 py-3 md:px-6">
+    <header className="relative flex items-center justify-between border-b border-border bg-card px-4 py-3 md:px-6">
+      <Link
+        href="/dashboard"
+        className="absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 items-center gap-2 sm:flex"
+      >
+        <img
+          src="https://mftrlabicbiixlgprdbi.supabase.co/storage/v1/object/public/logos/logo_light.png"
+          alt=""
+          aria-hidden="true"
+          className="h-7 w-7 rounded-md object-cover dark:hidden"
+        />
+        <img
+          src="https://mftrlabicbiixlgprdbi.supabase.co/storage/v1/object/public/logos/logo_dark.png"
+          alt=""
+          aria-hidden="true"
+          className="hidden h-7 w-7 rounded-md object-cover dark:block"
+        />
+        <span className="font-display text-base font-semibold leading-none text-text-primary">UniSphere</span>
+      </Link>
+
       <div className="flex items-center gap-3">
         <button
           type="button"
           onClick={onMenuClick}
           aria-label="Toggle sidebar"
-          className="rounded-lg p-2 text-text-muted transition hover:bg-accent/5 hover:text-primary"
+          className="rounded-lg p-2.5 text-text-muted transition hover:bg-accent/5 hover:text-primary"
         >
           <Menu className="h-5 w-5" />
         </button>
@@ -165,27 +182,13 @@ export default function Header({
             )}
           </AnimatePresence>
         </div>
-
-        <p className="hidden text-sm text-text-muted sm:block">
-          Welcome back, <span className="font-semibold text-text-primary">{firstName}</span>
-        </p>
-      </div>
-
-      <div className="absolute left-1/2 flex -translate-x-1/2 items-center gap-2">
-        <img
-          src={theme === 'dark'
-            ? 'https://mftrlabicbiixlgprdbi.supabase.co/storage/v1/object/public/logos/logo_dark.png'
-            : 'https://mftrlabicbiixlgprdbi.supabase.co/storage/v1/object/public/logos/logo_light.png'}
-          alt="UniVerse"
-          className="h-14 w-auto"
-        />
       </div>
 
       <div className="relative">
         <button
           type="button"
           onClick={() => setProfileOpen(open => !open)}
-          className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-primary text-sm font-semibold text-white transition hover:opacity-90"
+          className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-full bg-cta text-sm font-semibold text-cta-text transition hover:opacity-90"
           aria-label="Open profile menu"
         >
           {avatarUrl ? (
@@ -213,14 +216,6 @@ export default function Header({
                 <User className="h-4 w-4" />
                 Profile
               </Link>
-              <a
-                href="#"
-                className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-primary transition hover:bg-accent/5"
-              >
-                <Settings className="h-4 w-4" />
-                Settings
-              </a>
-
               <div className="mt-1 border-t border-border-subtle pt-2">{signOutButton}</div>
             </div>
           </>

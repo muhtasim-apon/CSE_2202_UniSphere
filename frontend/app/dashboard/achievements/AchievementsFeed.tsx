@@ -140,7 +140,7 @@ export default function AchievementsFeed({ token, currentUserName, currentUserAv
         <div className="relative">
           <button
             onClick={() => setDropdownOpen(d => !d)}
-            className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90"
+            className="flex items-center gap-2 rounded-xl bg-cta px-4 py-2 text-sm font-semibold text-cta-text transition hover:opacity-90"
           >
             <Plus className="h-4 w-4" /> Add
           </button>
@@ -167,7 +167,7 @@ export default function AchievementsFeed({ token, currentUserName, currentUserAv
             onClick={() => setTab(key)}
             className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
               tab === key
-                ? 'bg-primary text-white'
+                ? 'bg-cta text-cta-text'
                 : 'border border-border bg-card text-text-muted hover:border-primary hover:text-primary'
             }`}
           >
@@ -194,7 +194,7 @@ export default function AchievementsFeed({ token, currentUserName, currentUserAv
       ) : cards.length === 0 ? (
         <div className="rounded-card border border-border bg-card p-10 text-center shadow-[var(--shadow-card)]">
           <p className="text-text-muted">No achievements yet. Share your first one!</p>
-          <button onClick={() => setDropdownOpen(true)} className="mt-4 mx-auto flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white transition hover:opacity-90">
+          <button onClick={() => setDropdownOpen(true)} className="mt-4 mx-auto flex items-center gap-2 rounded-xl bg-cta px-4 py-2 text-sm font-semibold text-cta-text transition hover:opacity-90">
             <Plus className="h-4 w-4" /> Add Achievement
           </button>
         </div>

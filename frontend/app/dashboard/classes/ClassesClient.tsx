@@ -132,7 +132,7 @@ export default function ClassesClient({ userId, role }: Props) {
               {joinMsg ? (
                 <div className="text-center py-2">
                   <p className={`text-sm font-medium ${joinMsg.includes('joined') ? 'text-emerald-600' : 'text-red-500'}`}>{joinMsg}</p>
-                  <button onClick={() => setJoinMsg(null)} className="mt-4 rounded-xl bg-primary px-5 py-2 text-sm font-semibold text-white hover:opacity-90 transition">OK</button>
+                  <button onClick={() => setJoinMsg(null)} className="mt-4 rounded-xl bg-cta px-5 py-2 text-sm font-semibold text-cta-text hover:opacity-90 transition">OK</button>
                 </div>
               ) : joinLoading ? (
                 <div className="text-center py-4">
@@ -159,7 +159,7 @@ export default function ClassesClient({ userId, role }: Props) {
                     <button
                       onClick={handleJoinConfirm}
                       disabled={joining}
-                      className="flex-1 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white hover:opacity-90 transition disabled:opacity-60"
+                      className="flex-1 rounded-xl bg-cta px-4 py-2 text-sm font-semibold text-cta-text hover:opacity-90 transition disabled:opacity-60"
                     >
                       {joining ? 'Joining…' : 'Join This Class →'}
                     </button>
@@ -172,9 +172,15 @@ export default function ClassesClient({ userId, role }: Props) {
       </AnimatePresence>
 
       <div className="rounded-card border border-border bg-card p-5 shadow-[var(--shadow-card)]">
-        <div className="bg-gradient-to-r from-primary via-secondary to-accent rounded-xl px-5 py-4 text-white mb-4">
+        <div className="bg-gradient-to-r from-[#0B1F3A] via-[#123A63] to-[#1B4F82] rounded-xl px-5 py-6 text-white mb-4 flex flex-col items-center text-center gap-2">
+          <img
+            src="https://mftrlabicbiixlgprdbi.supabase.co/storage/v1/object/public/logos/logo_dark.png"
+            alt=""
+            aria-hidden="true"
+            className="h-10 w-10 rounded-lg object-cover"
+          />
           <h1 className="text-xl font-bold font-display">Classes</h1>
-          <p className="text-sm opacity-80 mt-0.5">Manage your courses, attendance, and academic performance</p>
+          <p className="text-sm opacity-80">Manage your courses, attendance, and academic performance</p>
         </div>
 
         <div className="flex flex-wrap gap-1 rounded-xl border border-border bg-background p-1 w-fit">
@@ -185,7 +191,7 @@ export default function ClassesClient({ userId, role }: Props) {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition-all duration-200 ${
-                  activeTab === tab.id ? 'bg-primary text-white shadow-sm' : 'text-muted hover:text-primary'
+                  activeTab === tab.id ? 'bg-cta text-cta-text shadow-sm' : 'text-muted hover:text-primary'
                 }`}
               >
                 <Icon className="h-4 w-4 flex-shrink-0" />

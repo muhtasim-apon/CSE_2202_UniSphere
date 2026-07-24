@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
+import AuthShell from '../components/auth/AuthShell'
 
 const inputClass =
   'w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20'
@@ -33,8 +34,7 @@ export default function SignInPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4 font-sans">
-      <div className="w-full max-w-sm rounded-card border border-border bg-card p-8 shadow-[var(--shadow-card)]">
+    <AuthShell>
         <h1 className="font-display text-2xl font-bold text-text-primary">Welcome back</h1>
         <p className="mt-1 text-sm text-text-muted">Sign in to your account.</p>
 
@@ -72,7 +72,6 @@ export default function SignInPage() {
             Sign up
           </Link>
         </p>
-      </div>
-    </main>
+    </AuthShell>
   )
 }

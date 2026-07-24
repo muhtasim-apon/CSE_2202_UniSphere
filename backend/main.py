@@ -3,6 +3,16 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Literal, Optional
 
+import truststore
+
+# This machine's network path (antivirus/corporate TLS inspection) injects
+# a root CA that only lives in the Windows cert store, and that CA's Basic
+# Constraints aren't marked critical — OpenSSL 3's parser rejects it outright,
+# breaking every outbound HTTPS call (httpx, urllib, ...). truststore routes
+# TLS verification through the OS's own validator instead, which already
+# trusts it.
+truststore.inject_into_ssl()
+
 import jwt as pyjwt
 from jwt import PyJWKClient
 from dotenv import load_dotenv

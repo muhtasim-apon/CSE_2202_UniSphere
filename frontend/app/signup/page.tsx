@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { validateName, validateEmail, validatePhone, validatePassword } from '@/lib/validation'
+import AuthShell from '../components/auth/AuthShell'
 
 const inputClass =
   'w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20'
@@ -68,8 +69,8 @@ export default function SignUpPage() {
 
   if (success) {
     return (
-      <main className="flex min-h-screen items-center justify-center px-4 font-sans">
-        <div className="w-full max-w-sm rounded-card border border-border bg-card p-8 text-center shadow-[var(--shadow-card)]">
+      <AuthShell>
+        <div className="text-center">
           <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-highlight/15 text-highlight">
             ✓
           </div>
@@ -82,13 +83,12 @@ export default function SignUpPage() {
             Go to sign in
           </Link>
         </div>
-      </main>
+      </AuthShell>
     )
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-4 py-10 font-sans">
-      <div className="w-full max-w-md rounded-card border border-border bg-card p-8 shadow-[var(--shadow-card)]">
+    <AuthShell>
         <h1 className="font-display text-2xl font-bold text-text-primary">Create an account</h1>
         <p className="mt-1 text-sm text-text-muted">Sign up to access the university portal.</p>
 
@@ -163,7 +163,6 @@ export default function SignUpPage() {
             Sign in
           </Link>
         </p>
-      </div>
-    </main>
+    </AuthShell>
   )
 }

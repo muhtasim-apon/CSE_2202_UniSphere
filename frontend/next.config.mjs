@@ -1,5 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // @react-three/fiber v8's WebGL context setup isn't safe under React 18
+  // Strict Mode's double effect-invocation in dev — it causes "WebGL context
+  // could not be created" on the auth pages' 3D canvas. Disabling here.
+  reactStrictMode: false,
   images: {
     remotePatterns: [
       {

@@ -17,8 +17,11 @@ const dmSans = DM_Sans({
 })
 
 export const metadata: Metadata = {
-  title: 'University Auth',
-  description: 'Sign Up / Sign In',
+  title: 'UniSphere',
+  description: 'A unified digital campus for the Department of CSE, University of Dhaka.',
+  icons: {
+    icon: '/favicon.svg',
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

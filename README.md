@@ -6,6 +6,8 @@
 
 Classes · Attendance · Exams & CGPA · Chat · Notice Board · Achievements & Portfolio — in one app.
 
+**Live Demo:** [unisphere-beta.vercel.app](https://unisphere-beta.vercel.app)
+
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Next.js](https://img.shields.io/badge/Next.js-14-black?logo=next.js)](frontend/package.json)
 [![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688?logo=fastapi)](backend/requirements.txt)
@@ -198,7 +200,9 @@ A full annotated ER diagram is available at [`.agents/er-final-updated.png`](.ag
 
 ## Production Deployment
 
-This repo doesn't currently ship CI/CD or container configs — deploy the two apps independently:
+The project is deployed on **Vercel** for the frontend and accessible live at [unisphere-beta.vercel.app](https://unisphere-beta.vercel.app).
+
+To deploy the two apps independently:
 
 - **Frontend** — deploy `frontend/` to [Vercel](https://vercel.com) (or any Next.js host). Set the three `NEXT_PUBLIC_*` env vars in the platform's dashboard; point `NEXT_PUBLIC_API_URL` at your deployed backend.
 - **Backend** — deploy `backend/` to any host that runs a long-lived ASGI process (Railway, Render, Fly.io, or a VPS with `uvicorn`/`gunicorn`). Set `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_JWT_SECRET` as platform secrets — never bake them into the image.

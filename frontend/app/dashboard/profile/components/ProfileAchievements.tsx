@@ -56,9 +56,9 @@ export default function ProfileAchievements({ userId }: Props) {
 
       try {
         const [pr, cr, pa] = await Promise.all([
-          getProjects(session.access_token),
-          getCertificates(session.access_token),
-          getPapers(session.access_token),
+          getProjects(session.access_token, userId),
+          getCertificates(session.access_token, userId),
+          getPapers(session.access_token, userId),
         ])
 
         const all: CompactItem[] = [

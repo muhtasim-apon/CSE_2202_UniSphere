@@ -172,13 +172,7 @@ export default function ClassesClient({ userId, role }: Props) {
       </AnimatePresence>
 
       <div className="rounded-card border border-border bg-card p-5 shadow-[var(--shadow-card)]">
-        <div className="bg-gradient-to-r from-[#0B1F3A] via-[#123A63] to-[#1B4F82] rounded-xl px-5 py-6 text-white mb-4 flex flex-col items-center text-center gap-2">
-          <img
-            src="https://mftrlabicbiixlgprdbi.supabase.co/storage/v1/object/public/logos/logo_dark.png"
-            alt=""
-            aria-hidden="true"
-            className="h-10 w-10 rounded-lg object-cover"
-          />
+        <div className="bg-gradient-to-r from-primary via-secondary to-accent dark:from-[#2b3245] dark:via-[#1e2838] dark:to-[#141d2b] rounded-xl px-5 py-6 text-white mb-4 flex flex-col items-center text-center gap-2">
           <h1 className="text-xl font-bold font-display">Classes</h1>
           <p className="text-sm opacity-80">Manage your courses, attendance, and academic performance</p>
         </div>

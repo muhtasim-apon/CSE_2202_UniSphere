@@ -1,7 +1,5 @@
 import { NextResponse } from 'next/server'
 
-const ALLOWED_HOST = 'www.du.ac.bd'
-
 export const revalidate = 86400 // cache 24 h
 
 export async function GET(request: Request) {
@@ -19,7 +17,11 @@ export async function GET(request: Request) {
   } catch {
     return new NextResponse('Invalid URL', { status: 400 })
   }
-  if (parsed.hostname !== ALLOWED_HOST) {
+  
+  const host = parsed.hostname.toLowerCase()
+  const isDuAcBd = host === 'du.ac.bd' || host.endsWith('.du.ac.bd')
+  const isDuEduBd = host === 'du.edu.bd' || host.endsWith('.du.edu.bd')
+  if (!isDuAcBd && !isDuEduBd) {
     return new NextResponse('Forbidden host', { status: 403 })
   }
 
@@ -35,11 +37,13 @@ export async function GET(request: Request) {
     })
 
     if (!res.ok) {
+      console.warn(`Image proxy failed to fetch ${imageUrl}: HTTP ${res.status}`)
       return new NextResponse('Image not found', { status: 404 })
     }
 
     const contentType = res.headers.get('Content-Type') || 'image/jpeg'
     if (!contentType.startsWith('image/')) {
+      console.warn(`Image proxy got invalid content type: ${contentType} for ${imageUrl}`)
       return new NextResponse('Not an image', { status: 400 })
     }
 
@@ -53,7 +57,8 @@ export async function GET(request: Request) {
         'Access-Control-Allow-Origin': '*',
       },
     })
-  } catch {
+  } catch (error) {
+    console.error(`Image proxy error fetching ${imageUrl}:`, error)
     return new NextResponse('Proxy error', { status: 502 })
   }
 }

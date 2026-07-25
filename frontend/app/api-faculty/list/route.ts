@@ -57,13 +57,18 @@ function parseFacultyList(html: string, baseUrl: string): FacultyMember[] {
     const context = html.slice(ctxStart, ctxEnd)
 
     // Photo: find img whose src contains common DU photo path patterns
-    let photoUrl = ''
+    const linkRelIndex = linkMatch.index - ctxStart
+    let bestPhoto = ''
+    let bestDist = Infinity
     const imgMatches = [
-      ...context.matchAll(/<img[^>]+src=["']([^"']+)["'][^>]*>/gi),
+      ...context.matchAll(/<img[^>]*?src=["']([^"']+)["']/gi),
     ]
     for (const m of imgMatches) {
+      const matchIdx = m.index ?? 0
+      if (matchIdx > linkRelIndex) continue
+      
+      const dist = linkRelIndex - matchIdx
       const src = m[1]
-      // Prefer paths that look like actual faculty photos
       const looksLikePhoto =
         src.includes('faculty_image') ||
         src.includes('cse_') ||
@@ -76,11 +81,15 @@ function parseFacultyList(html: string, baseUrl: string): FacultyMember[] {
         src.includes('btn') ||
         src.includes('arrow') ||
         src.length < 10
-      if (!isNoise && (looksLikePhoto || (!photoUrl && src.length > 10))) {
-        photoUrl = makeAbsolute(src, baseUrl)
-        if (looksLikePhoto) break // prefer the specific match
+
+      if (!isNoise && (looksLikePhoto || src.length > 10)) {
+        if (dist < bestDist) {
+          bestDist = dist
+          bestPhoto = src
+        }
       }
     }
+    let photoUrl = bestPhoto ? makeAbsolute(bestPhoto, baseUrl) : ''
 
     // Name: look for h3/h4/h5/strong/b tags
     const namePatterns = [

@@ -208,7 +208,17 @@ export default async function DashboardPage() {
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-text-primary">
                         <span className="font-medium">{room.title || 'Direct message'}:</span>{' '}
-                        {room.last_message?.body || 'Sent an attachment'}
+                        {room.last_message?.body
+                          ? (() => {
+                              if (room.last_message.body.startsWith('{"_sys"')) {
+                                try {
+                                  const sys = JSON.parse(room.last_message.body)
+                                  return sys.text
+                                } catch {}
+                              }
+                              return room.last_message.body
+                            })()
+                          : 'Sent an attachment'}
                       </p>
                       <p className="text-xs text-text-muted">
                         {room.last_message ? formatRelativeTime(room.last_message.created_at) : ''}

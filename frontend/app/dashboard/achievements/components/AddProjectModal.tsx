@@ -80,6 +80,10 @@ export default function AddProjectModal({ token, onClose, onSuccess }: Props) {
 
   async function handleSave() {
     if (!title.trim()) { setError('Project name is required'); return }
+    if (!isCurrent && !endYear) {
+      setError('Please select an End Year or check "I am currently working on this project"');
+      return
+    }
     setSaving(true)
     setError('')
     try {

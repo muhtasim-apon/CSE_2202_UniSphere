@@ -4,7 +4,7 @@ import SignOutButton from '../sign-out-button'
 import DashboardShell from '../components/DashboardShell'
 import AchievementsFeed from './AchievementsFeed'
 
-export default async function AchievementsPage() {
+export default async function AchievementsPage({ searchParams }: { searchParams?: { tab?: string } }) {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) redirect('/signin')
@@ -17,6 +17,7 @@ export default async function AchievementsPage() {
   const firstName = profile?.first_name || user.email?.split('@')[0] || 'User'
   const lastName = profile?.last_name || ''
   const initials = `${firstName.charAt(0)}${lastName.charAt(0) || ''}`.toUpperCase()
+  const defaultTab = searchParams?.tab === 'projects' ? 'projects' : 'all'
 
   return (
     <DashboardShell
@@ -31,6 +32,7 @@ export default async function AchievementsPage() {
         token={session?.access_token ?? ''}
         currentUserName={`${firstName} ${lastName}`.trim()}
         currentUserAvatar={profile?.avatar_url}
+        initialTab={defaultTab}
       />
     </DashboardShell>
   )

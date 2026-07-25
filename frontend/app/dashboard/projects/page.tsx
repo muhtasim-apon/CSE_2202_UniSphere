@@ -31,6 +31,7 @@ export default async function ProjectsPage() {
         token={session?.access_token ?? ''}
         currentUserName={`${firstName} ${lastName}`.trim()}
         initialTab="projects"
+        hideTabs={true}
       />
     </DashboardShell>
   )

@@ -59,78 +59,45 @@ export default function ProjectsModuleCard() {
       setUserName(`${fn} ${ln}`.trim())
 
       try {
-        const [pr, cr] = await Promise.all([
-          getProjects(session.access_token, undefined, 1),
-          getCertificates(session.access_token, undefined, 1),
-        ])
-        const items: RecentItem[] = [
-          ...pr.projects.map((p: Project) => ({
+        const pr = await getProjects(session.access_token, undefined, 1)
+        const items: RecentItem[] = pr.projects.map((p: Project) => ({
+          id: p.project_id,
+          type: 'project' as const,
+          title: p.title,
+          thumbnailUrl: p.thumbnail_url,
+          date: p.created_at,
+          cardData: {
             id: p.project_id,
             type: 'project' as const,
             title: p.title,
+            subtitle: p.associated_with,
+            description: p.description,
             thumbnailUrl: p.thumbnail_url,
-            date: p.created_at,
-            cardData: {
-              id: p.project_id,
-              type: 'project' as const,
-              title: p.title,
-              subtitle: p.associated_with,
-              description: p.description,
-              thumbnailUrl: p.thumbnail_url,
-              githubUrl: p.github_url,
-              liveDemoUrl: p.live_demo_url,
-              skills: p.skills,
-              reactions: p.reactions,
-              avgRating: p.avg_rating,
-              commentCount: p.comment_count,
-              authorName: p.author_name,
-              media: p.media,
-              relativeDate: new Date(p.created_at).toLocaleDateString(),
-              userId: p.user_id,
-            } as AchievementCardData,
-          })),
-          ...cr.certificates.map((c: Certificate) => ({
-            id: c.certificate_id,
-            type: 'certificate' as const,
-            title: c.cert_name,
-            date: c.created_at,
-            cardData: {
-              id: c.certificate_id,
-              type: 'certificate' as const,
-              title: c.cert_name,
-              subtitle: c.issuing_org,
-              skills: c.skills,
-              reactions: c.reactions,
-              avgRating: c.avg_rating,
-              commentCount: c.comment_count,
-              authorName: c.author_name,
-              media: c.media,
-              relativeDate: new Date(c.created_at).toLocaleDateString(),
-              userId: c.user_id,
-            } as AchievementCardData,
-          })),
-        ]
-          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-          .slice(0, 3)
-        setRecent(items)
+            githubUrl: p.github_url,
+            liveDemoUrl: p.live_demo_url,
+            skills: p.skills,
+            reactions: p.reactions,
+            avgRating: p.avg_rating,
+            commentCount: p.comment_count,
+            authorName: p.author_name,
+            media: p.media,
+            relativeDate: new Date(p.created_at).toLocaleDateString(),
+            userId: p.user_id,
+          } as AchievementCardData,
+        }))
+        setRecent(items.slice(0, 3))
       } catch {}
     })
   }, [])
 
   function handleAddSuccess() {
     if (!token) return
-    Promise.all([getProjects(token, undefined, 1), getCertificates(token, undefined, 1)]).then(([pr, cr]) => {
-      const items: RecentItem[] = [
-        ...pr.projects.map((p: Project) => ({
-          id: p.project_id, type: 'project' as const, title: p.title, thumbnailUrl: p.thumbnail_url, date: p.created_at,
-          cardData: { id: p.project_id, type: 'project' as const, title: p.title, subtitle: p.associated_with, description: p.description, thumbnailUrl: p.thumbnail_url, githubUrl: p.github_url, liveDemoUrl: p.live_demo_url, skills: p.skills, reactions: p.reactions, avgRating: p.avg_rating, commentCount: p.comment_count, authorName: p.author_name, media: p.media, relativeDate: new Date(p.created_at).toLocaleDateString(), userId: p.user_id } as AchievementCardData,
-        })),
-        ...cr.certificates.map((c: Certificate) => ({
-          id: c.certificate_id, type: 'certificate' as const, title: c.cert_name, date: c.created_at,
-          cardData: { id: c.certificate_id, type: 'certificate' as const, title: c.cert_name, subtitle: c.issuing_org, skills: c.skills, reactions: c.reactions, avgRating: c.avg_rating, commentCount: c.comment_count, authorName: c.author_name, media: c.media, relativeDate: new Date(c.created_at).toLocaleDateString(), userId: c.user_id } as AchievementCardData,
-        })),
-      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 3)
-      setRecent(items)
+    getProjects(token, undefined, 1).then((pr) => {
+      const items: RecentItem[] = pr.projects.map((p: Project) => ({
+        id: p.project_id, type: 'project' as const, title: p.title, thumbnailUrl: p.thumbnail_url, date: p.created_at,
+        cardData: { id: p.project_id, type: 'project' as const, title: p.title, subtitle: p.associated_with, description: p.description, thumbnailUrl: p.thumbnail_url, githubUrl: p.github_url, liveDemoUrl: p.live_demo_url, skills: p.skills, reactions: p.reactions, avgRating: p.avg_rating, commentCount: p.comment_count, authorName: p.author_name, media: p.media, relativeDate: new Date(p.created_at).toLocaleDateString(), userId: p.user_id } as AchievementCardData,
+      }))
+      setRecent(items.slice(0, 3))
     }).catch(() => {})
   }
 
@@ -146,28 +113,7 @@ export default function ProjectsModuleCard() {
         <div className="mb-3 flex items-center justify-between gap-2">
           <h3 className="font-display text-base font-semibold text-text-primary">Projects</h3>
           <div className="flex items-center gap-2">
-            <div className="relative">
-              <button
-                onClick={() => setDropdownOpen(d => !d)}
-                className="flex items-center gap-1 rounded-lg bg-cta px-3 py-1.5 text-xs font-semibold text-cta-text transition hover:opacity-90"
-              >
-                <Plus className="h-3.5 w-3.5" /> Add
-              </button>
-              {dropdownOpen && (
-                <div className="absolute right-0 top-full z-20 mt-1 w-48 rounded-xl border border-border bg-card shadow-lg">
-                  <button onClick={() => { setAddModal('project'); setDropdownOpen(false) }} className="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-text-primary transition hover:bg-primary/5 hover:text-primary">
-                    <Folder className="h-4 w-4" /> Add Project
-                  </button>
-                  <button onClick={() => { setAddModal('certificate'); setDropdownOpen(false) }} className="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-text-primary transition hover:bg-primary/5 hover:text-primary">
-                    <Award className="h-4 w-4" /> Add Certificate
-                  </button>
-                  <button onClick={() => { setAddModal('paper'); setDropdownOpen(false) }} className="flex w-full items-center gap-2 px-4 py-2.5 text-sm text-text-primary transition hover:bg-primary/5 hover:text-primary">
-                    <FileText className="h-4 w-4" /> Add Research Paper
-                  </button>
-                </div>
-              )}
-            </div>
-            <Link href="/dashboard/projects" className="flex items-center gap-1 text-sm font-medium text-primary transition hover:underline">
+            <Link href="/dashboard/achievements?tab=projects" className="flex items-center gap-1 text-sm font-medium text-primary transition hover:underline">
               View all <ChevronRight className="h-3.5 w-3.5" />
             </Link>
           </div>
@@ -202,18 +148,10 @@ export default function ProjectsModuleCard() {
             ))}
           </ul>
         ) : (
-          <p className="mb-4 text-sm text-text-muted">No achievements yet.</p>
+          <p className="mb-4 text-sm text-text-muted">No projects yet.</p>
         )}
 
-        {/* Bottom pills */}
-        <div className="flex gap-2">
-          <Link href="/dashboard/projects" className="rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-text-muted transition hover:border-primary hover:text-primary">
-            My Projects
-          </Link>
-          <Link href="/dashboard/achievements" className="rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-text-muted transition hover:border-primary hover:text-primary">
-            My Achievements
-          </Link>
-        </div>
+
       </div>
 
       {/* Detail modal */}

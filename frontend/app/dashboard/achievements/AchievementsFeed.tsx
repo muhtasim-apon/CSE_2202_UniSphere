@@ -19,6 +19,20 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'certificates', label: 'Certificates' },
   { key: 'papers', label: 'Research Papers' },
 ]
+ 
+const EMPTY_MESSAGES: Record<Tab, string> = {
+  all: 'No achievements yet. Share your first one!',
+  projects: 'No projects yet. Add your first one!',
+  certificates: 'No certificates yet. Add your first one!',
+  papers: 'No research papers yet. Add your first one!',
+}
+ 
+const ADD_BUTTON_LABELS: Record<Tab, string> = {
+  all: 'Add Achievement',
+  projects: 'Add Project',
+  certificates: 'Add Certificate',
+  papers: 'Add Research Paper',
+}
 
 function projectToCard(p: Project): AchievementCardData {
   const dateRange = [
@@ -90,9 +104,9 @@ function paperToCard(p: ResearchPaper): AchievementCardData {
   }
 }
 
-type Props = { token: string; currentUserName: string; currentUserAvatar?: string | null; initialTab?: Tab }
+type Props = { token: string; currentUserName: string; currentUserAvatar?: string | null; initialTab?: Tab; hideTabs?: boolean }
 
-export default function AchievementsFeed({ token, currentUserName, currentUserAvatar, initialTab = 'all' }: Props) {
+export default function AchievementsFeed({ token, currentUserName, currentUserAvatar, initialTab = 'all', hideTabs = false }: Props) {
   const [tab, setTab] = useState<Tab>(initialTab)
   const [cards, setCards] = useState<AchievementCardData[]>([])
   const [loading, setLoading] = useState(true)
@@ -136,45 +150,60 @@ export default function AchievementsFeed({ token, currentUserName, currentUserAv
   return (
     <div>
       <div className="mb-6 flex items-center justify-between">
-        <h1 className="font-display text-2xl font-bold text-text-primary">Achievements</h1>
+        <h1 className="font-display text-2xl font-bold text-text-primary">
+          {hideTabs && initialTab === 'projects' ? 'Projects' : 'Achievements'}
+        </h1>
         <div className="relative">
-          <button
-            onClick={() => setDropdownOpen(d => !d)}
-            className="flex items-center gap-2 rounded-xl bg-cta px-4 py-2 text-sm font-semibold text-cta-text transition hover:opacity-90"
-          >
-            <Plus className="h-4 w-4" /> Add
-          </button>
-          {dropdownOpen && (
-            <div className="absolute right-0 top-full z-20 mt-1 w-52 rounded-xl border border-border bg-card shadow-lg">
-              <button onClick={() => { setAddModal('project'); setDropdownOpen(false) }} className="flex w-full items-center gap-3 px-4 py-3 text-sm text-text-primary transition hover:bg-primary/5 hover:text-primary">
-                <Folder className="h-4 w-4" /> Add Project
+          {hideTabs && initialTab === 'projects' ? (
+            <button
+              onClick={() => setAddModal('project')}
+              className="flex items-center gap-2 rounded-xl bg-cta px-4 py-2 text-sm font-semibold text-cta-text transition hover:opacity-90"
+            >
+              <Plus className="h-4 w-4" /> Add Project
+            </button>
+          ) : (
+            <>
+              <button
+                onClick={() => setDropdownOpen(d => !d)}
+                className="flex items-center gap-2 rounded-xl bg-cta px-4 py-2 text-sm font-semibold text-cta-text transition hover:opacity-90"
+              >
+                <Plus className="h-4 w-4" /> Add
               </button>
-              <button onClick={() => { setAddModal('certificate'); setDropdownOpen(false) }} className="flex w-full items-center gap-3 px-4 py-3 text-sm text-text-primary transition hover:bg-primary/5 hover:text-primary">
-                <Award className="h-4 w-4" /> Add Certificate
-              </button>
-              <button onClick={() => { setAddModal('paper'); setDropdownOpen(false) }} className="flex w-full items-center gap-3 px-4 py-3 text-sm text-text-primary transition hover:bg-primary/5 hover:text-primary">
-                <FileText className="h-4 w-4" /> Add Research Paper
-              </button>
-            </div>
+              {dropdownOpen && (
+                <div className="absolute right-0 top-full z-20 mt-1 w-52 rounded-xl border border-border bg-card shadow-lg">
+                  <button onClick={() => { setAddModal('project'); setDropdownOpen(false) }} className="flex w-full items-center gap-3 px-4 py-3 text-sm text-text-primary transition hover:bg-primary/5 hover:text-primary">
+                    <Folder className="h-4 w-4" /> Add Project
+                  </button>
+                  <button onClick={() => { setAddModal('certificate'); setDropdownOpen(false) }} className="flex w-full items-center gap-3 px-4 py-3 text-sm text-text-primary transition hover:bg-primary/5 hover:text-primary">
+                    <Award className="h-4 w-4" /> Add Certificate
+                  </button>
+                  <button onClick={() => { setAddModal('paper'); setDropdownOpen(false) }} className="flex w-full items-center gap-3 px-4 py-3 text-sm text-text-primary transition hover:bg-primary/5 hover:text-primary">
+                    <FileText className="h-4 w-4" /> Add Research Paper
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
 
-      <div className="mb-6 flex flex-wrap gap-2">
-        {TABS.map(({ key, label }) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
-              tab === key
-                ? 'bg-cta text-cta-text'
-                : 'border border-border bg-card text-text-muted hover:border-primary hover:text-primary'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      {!hideTabs && (
+        <div className="mb-6 flex flex-wrap gap-2">
+          {TABS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => setTab(key)}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${
+                tab === key
+                  ? 'bg-cta text-cta-text'
+                  : 'border border-border bg-card text-text-muted hover:border-primary hover:text-primary'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {loading ? (
         <div className="space-y-4">
@@ -193,9 +222,22 @@ export default function AchievementsFeed({ token, currentUserName, currentUserAv
         </div>
       ) : cards.length === 0 ? (
         <div className="rounded-card border border-border bg-card p-10 text-center shadow-[var(--shadow-card)]">
-          <p className="text-text-muted">No achievements yet. Share your first one!</p>
-          <button onClick={() => setDropdownOpen(true)} className="mt-4 mx-auto flex items-center gap-2 rounded-xl bg-cta px-4 py-2 text-sm font-semibold text-cta-text transition hover:opacity-90">
-            <Plus className="h-4 w-4" /> Add Achievement
+          <p className="text-text-muted">{EMPTY_MESSAGES[tab]}</p>
+          <button
+            onClick={() => {
+              if (tab === 'all') {
+                setDropdownOpen(true)
+              } else if (tab === 'projects') {
+                setAddModal('project')
+              } else if (tab === 'certificates') {
+                setAddModal('certificate')
+              } else if (tab === 'papers') {
+                setAddModal('paper')
+              }
+            }}
+            className="mt-4 mx-auto flex items-center gap-2 rounded-xl bg-cta px-4 py-2 text-sm font-semibold text-cta-text transition hover:opacity-90"
+          >
+            <Plus className="h-4 w-4" /> {ADD_BUTTON_LABELS[tab]}
           </button>
         </div>
       ) : (

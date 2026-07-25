@@ -10,9 +10,11 @@ const VolumetricBeamsFullScreen = dynamic(
 
 type AuthShellProps = {
   children: ReactNode
+  /** Tailwind max-width class for the inner card. Defaults to `max-w-md`. */
+  cardMaxWidth?: string
 }
 
-export default function AuthShell({ children }: AuthShellProps) {
+export default function AuthShell({ children, cardMaxWidth = 'max-w-md' }: AuthShellProps) {
   return (
     <main className="dark relative min-h-screen overflow-hidden bg-black font-sans">
       <VolumetricBeamsFullScreen
@@ -66,7 +68,7 @@ export default function AuthShell({ children }: AuthShellProps) {
           </span>
         </div>
 
-        <div className="pointer-events-auto w-full max-w-md rounded-card border border-white/10 bg-card/95 p-8 shadow-2xl backdrop-blur-xl">
+        <div className={`pointer-events-auto w-full ${cardMaxWidth} rounded-card border border-white/10 bg-card/95 p-8 shadow-2xl backdrop-blur-xl`}>
           {children}
         </div>
       </div>

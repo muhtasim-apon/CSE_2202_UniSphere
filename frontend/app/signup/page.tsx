@@ -103,7 +103,7 @@ export default function SignUpPage() {
                   onClick={() => setRole(option)}
                   className={`rounded-lg border px-3 py-2 text-sm font-medium capitalize transition ${
                     role === option
-                      ? 'border-accent bg-accent/10 text-accent'
+                      ? 'border-accent bg-accent/30 text-white'
                       : 'border-border text-muted hover:bg-accent/5'
                   }`}
                 >

@@ -3,7 +3,7 @@ import random
 import string
 import uuid as _uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 import jwt as pyjwt
 from jwt import PyJWKClient as _PyJWKClient
@@ -826,6 +826,38 @@ async def update_hire_date(body: HireDateRequest, authorization: Optional[str] =
     if not upd.data:
         raise HTTPException(status_code=404, detail="Instructor not found")
     return {"hire_date": body.hire_date}
+
+
+class ProfilePhotoRequest(BaseModel):
+    photo_url: str = Field(min_length=1, max_length=2048)
+    role: Literal["student", "instructor"]
+
+
+@profile_router.patch("/photo")
+async def update_profile_photo(body: ProfilePhotoRequest, authorization: Optional[str] = Header(default=None)):
+    """Update the user's profile_photo URL on the student/instructor table.
+
+    The frontend uploads the file directly to the public `profile-photos`
+    storage bucket, then calls this endpoint so the backend (using
+    service_role) can write the resulting public URL into the row —
+    bypassing the table's RLS policy.
+    """
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing token")
+    res = _supabase.auth.get_user(authorization.split(" ", 1)[1])
+    if not res.user:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    table = "instructor" if body.role == "instructor" else "student"
+    upd = (
+        _supabase.table(table)
+        .update({"profile_photo": body.photo_url})
+        .eq("profile_id", res.user.id)
+        .execute()
+    )
+    if not upd.data:
+        raise HTTPException(status_code=404, detail=f"{table.capitalize()} row not found")
+    return {"profile_photo": body.photo_url}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

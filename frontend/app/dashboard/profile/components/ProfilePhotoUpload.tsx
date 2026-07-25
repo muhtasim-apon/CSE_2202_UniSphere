@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp']
@@ -15,6 +16,7 @@ type ProfilePhotoUploadProps = {
 }
 
 export default function ProfilePhotoUpload({ userId, role, photoUrl, initials, onUploaded }: ProfilePhotoUploadProps) {
+  const router = useRouter()
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [cacheBust, setCacheBust] = useState(0)
@@ -36,7 +38,7 @@ export default function ProfilePhotoUpload({ userId, role, photoUrl, initials, o
     setUploading(true)
     const supabase = createClient()
     const ext = file.name.split('.').pop()
-    const path = `${userId}/avatar.${ext}`
+    const path = `${userId}/avatar_${Date.now()}.${ext}`
 
     const { error: uploadError } = await supabase.storage
       .from('profile-photos')
@@ -49,22 +51,38 @@ export default function ProfilePhotoUpload({ userId, role, photoUrl, initials, o
     }
 
     const { data: publicUrlData } = supabase.storage.from('profile-photos').getPublicUrl(path)
+    const photoUrl = publicUrlData.publicUrl
 
-    const table = role === 'instructor' ? 'instructor' : 'student'
-    const { error: updateError } = await supabase
-      .from(table)
-      .update({ profile_photo: publicUrlData.publicUrl })
-      .eq('profile_id', userId)
+    // Update the row through the backend (service_role) so RLS on
+    // the student / instructor table doesn't reject the write.
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      setUploading(false)
+      setError('Your session has expired. Please sign in again.')
+      return
+    }
+
+    const apiBase = process.env.NEXT_PUBLIC_API_URL
+    const response = await fetch(`${apiBase}/api/profile/photo`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify({ photo_url: photoUrl, role }),
+    })
 
     setUploading(false)
 
-    if (updateError) {
-      setError(updateError.message)
+    if (!response.ok) {
+      const body = await response.json().catch(() => null)
+      setError(body?.detail ?? `Failed to save profile photo (HTTP ${response.status})`)
       return
     }
 
     setCacheBust((n) => n + 1)
-    onUploaded(publicUrlData.publicUrl)
+    onUploaded(photoUrl)
+    router.refresh()
   }
 
   const displayUrl = photoUrl ? `${photoUrl}?v=${cacheBust}` : null

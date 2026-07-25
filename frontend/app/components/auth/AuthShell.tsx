@@ -14,7 +14,7 @@ type AuthShellProps = {
 
 export default function AuthShell({ children }: AuthShellProps) {
   return (
-    <main className="relative min-h-screen overflow-hidden bg-black font-sans">
+    <main className="dark relative min-h-screen overflow-hidden bg-black font-sans">
       <VolumetricBeamsFullScreen
         className="fixed inset-0 bg-black"
         dpr={[1, 1.75]}

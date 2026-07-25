@@ -9,23 +9,33 @@
 # ============================================================
 
 # ── OS detection ─────────────────────────────────────────────
-# Forward slashes are used everywhere so Git Bash (MinGW) and
-# POSIX shells both work. Python and Windows also accept /.
+# GnuWin32 make (3.81) runs recipes through cmd.exe on Windows
+# even when SHELL is set to bash, so install paths and the
+# backend recipe use Windows-native backslashes there.
 ifeq ($(OS),Windows_NT)
     PYTHON      := py -3
     # Paths relative to project root (used for install)
-    PIP         := backend/venv/Scripts/pip.exe
-    # Path relative to backend/ dir (used after "cd backend &&")
-    UVICORN     := venv/Scripts/uvicorn.exe
+    PIP         := backend\venv\Scripts\pip.exe
+    # Backend recipe is invoked via `cmd /c` so the shell that
+    # actually runs it (cmd.exe) can resolve the relative path.
+    # `python -m uvicorn` avoids needing uvicorn.exe on PATH.
+    UVICORN     := venv\Scripts\python.exe
+    UVI_ARGS    := -m uvicorn main:app --reload --host 0.0.0.0 --port 8000
     # npm.cmd avoids the "C:/Program Files/nodejs/npm" spaces issue
     NPM         := npm.cmd
     MKDIR       := mkdir
+    # `cmd /c` lets the recipe run under cmd.exe regardless of
+    # which shell the user invoked `make` from (PowerShell,
+    # Git Bash, cmd, etc.).
+    SHELL_CMD   := cmd /c
 else
     PYTHON      := python3
     PIP         := backend/venv/bin/pip
     UVICORN     := venv/bin/uvicorn
+    UVI_ARGS    := main:app --reload --host 0.0.0.0 --port 8000
     NPM         := npm
     MKDIR       := mkdir -p
+    SHELL_CMD   := sh -c
 endif
 
 FRONTEND_DIR := frontend
@@ -64,15 +74,15 @@ install: install-backend install-frontend ## Install ALL dependencies
 
 install-frontend: ## Install frontend Node.js packages (npm install)
 	@echo "[frontend] Installing Node.js packages..."
-	cd $(FRONTEND_DIR) && $(NPM) install
+	$(SHELL_CMD) "cd /d $(FRONTEND_DIR) && $(NPM) install"
 	@echo "[frontend] Done."
 
 install-backend: ## Create Python venv and install pip packages
 	@echo "[backend] Creating Python virtual environment..."
 	$(PYTHON) -m venv $(BACKEND_DIR)/venv
 	@echo "[backend] Installing Python packages..."
-	$(BACKEND_DIR)/venv/Scripts/python.exe -m pip install --upgrade pip --quiet
-	$(BACKEND_DIR)/venv/Scripts/python.exe -m pip install -r $(BACKEND_DIR)/requirements.txt
+	$(SHELL_CMD) "$(BACKEND_DIR)\\venv\\Scripts\\python.exe -m pip install --upgrade pip --quiet"
+	$(SHELL_CMD) "$(BACKEND_DIR)\\venv\\Scripts\\python.exe -m pip install -r $(BACKEND_DIR)\\requirements.txt"
 	@echo "[backend] Done."
 
 # ── Dev servers ──────────────────────────────────────────────
@@ -86,7 +96,7 @@ frontend: ## Start the Next.js dev server (http://localhost:3000)
 
 backend: ## Start the FastAPI dev server (http://localhost:8000)
 	@echo "[backend] Starting FastAPI..."
-	cd $(BACKEND_DIR) && $(UVICORN) main:app --reload --host 0.0.0.0 --port 8000
+	@$(SHELL_CMD) "cd /d $(BACKEND_DIR) && $(UVICORN) $(UVI_ARGS)"
 
 # ── Clean ────────────────────────────────────────────────────
 

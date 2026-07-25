@@ -28,5 +28,4 @@ Thumbs.db
 .idea/
 .agents
 .claude
-
-
+.puku-cli

@@ -4,8 +4,9 @@ import AuthShell from './components/auth/AuthShell'
 export default function Home() {
   return (
     <AuthShell>
-      <h1 className="font-display text-2xl font-bold text-text-primary text-center">University Portal</h1>
-      <p className="mt-2 text-sm text-text-muted text-center">Sign in to your account or create a new one.</p>
+      <h1 className="font-display text-2xl font-bold text-text-primary text-center">
+        One Connected Campus
+      </h1>
       <div className="mt-6 flex flex-col gap-3">
         <Link
           href="/signin"

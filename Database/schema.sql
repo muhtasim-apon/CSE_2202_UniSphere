@@ -476,13 +476,13 @@ $$;
 ALTER FUNCTION "public"."fn_hash_password"("p_password" "text") OWNER TO "postgres";
 
 
-CREATE OR REPLACE FUNCTION "public"."fn_join_room_by_code"("p_code" "text", "p_password" "text" DEFAULT NULL::"text", "p_user_id" "uuid" DEFAULT NULL::"uuid") RETURNS "uuid"
+CREATE OR REPLACE FUNCTION "public"."fn_join_room_by_code"("p_code" "text", "p_password" "text" DEFAULT NULL::"text") RETURNS "uuid"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO 'extensions', 'public'
     AS $$
 DECLARE
   v_room    public.chat_room%ROWTYPE;
-  v_my_id   UUID := COALESCE(p_user_id, auth.uid());
+  v_my_id   UUID := auth.uid();
 BEGIN
   SELECT * INTO v_room FROM public.chat_room WHERE room_code = p_code;
 
@@ -507,6 +507,39 @@ $$;
 
 
 ALTER FUNCTION "public"."fn_join_room_by_code"("p_code" "text", "p_password" "text") OWNER TO "postgres";
+
+
+CREATE OR REPLACE FUNCTION "public"."fn_join_room_by_code"("p_code" "text", "p_password" "text" DEFAULT NULL::"text", "p_user_id" "uuid" DEFAULT NULL::"uuid") RETURNS "uuid"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'extensions', 'public'
+    AS $$
+  DECLARE
+    v_room    public.chat_room%ROWTYPE;
+    v_my_id   UUID := COALESCE(p_user_id, auth.uid());
+  BEGIN
+    SELECT * INTO v_room FROM public.chat_room WHERE room_code = p_code;
+
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Room not found for code: %', p_code;
+    END IF;
+
+    IF v_room.password_hash IS NOT NULL THEN
+      IF p_password IS NULL OR extensions.crypt(p_password, v_room.password_hash) <>
+  v_room.password_hash THEN
+        RAISE EXCEPTION 'Incorrect password';
+      END IF;
+    END IF;
+
+    INSERT INTO public.chat_room_member (room_id, profile_id, member_role)
+    VALUES (v_room.id, v_my_id, 'member')
+    ON CONFLICT (room_id, profile_id) DO NOTHING;
+
+    RETURN v_room.id;
+  END;
+  $$;
+
+
+ALTER FUNCTION "public"."fn_join_room_by_code"("p_code" "text", "p_password" "text", "p_user_id" "uuid") OWNER TO "postgres";
 
 
 CREATE OR REPLACE FUNCTION "public"."fn_profile_id_by_email"("p_email" "text") RETURNS "uuid"
@@ -1041,6 +1074,8 @@ CREATE TABLE IF NOT EXISTS "public"."chat_request" (
     "status" "public"."chat_request_status" DEFAULT 'pending'::"public"."chat_request_status" NOT NULL,
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "responded_at" timestamp with time zone,
+    "room_id" "uuid",
+    "room_title" "text",
     CONSTRAINT "chat_request_no_self" CHECK (("from_id" <> "to_id"))
 );
 
@@ -1056,7 +1091,8 @@ CREATE TABLE IF NOT EXISTS "public"."chat_room" (
     "password_hash" "text",
     "is_ephemeral" boolean DEFAULT false NOT NULL,
     "created_by" "uuid" NOT NULL,
-    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "avatar_url" "text"
 );
 
 
@@ -1069,6 +1105,7 @@ CREATE TABLE IF NOT EXISTS "public"."chat_room_member" (
     "member_role" "text" DEFAULT 'member'::"text" NOT NULL,
     "joined_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "last_read_at" timestamp with time zone,
+    "nickname" "text",
     CONSTRAINT "chat_room_member_member_role_check" CHECK (("member_role" = ANY (ARRAY['owner'::"text", 'member'::"text"])))
 );
 
@@ -1491,6 +1528,8 @@ CREATE TABLE IF NOT EXISTS "public"."notification" (
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     CONSTRAINT "notification_notif_type_check" CHECK ((("notif_type")::"text" = ANY ((ARRAY['new_project'::character varying, 'new_certificate'::character varying, 'new_research_paper'::character varying, 'new_comment'::character varying, 'new_reaction'::character varying, 'new_rating'::character varying, 'new_notice'::character varying, 'new_event'::character varying, 'general'::character varying])::"text"[])))
 );
+
+ALTER TABLE ONLY "public"."notification" REPLICA IDENTITY FULL;
 
 
 ALTER TABLE "public"."notification" OWNER TO "postgres";
@@ -2164,11 +2203,6 @@ ALTER TABLE ONLY "public"."chat_request"
 
 
 
-ALTER TABLE ONLY "public"."chat_request"
-    ADD CONSTRAINT "chat_request_unique" UNIQUE ("from_id", "to_id");
-
-
-
 ALTER TABLE ONLY "public"."chat_room_member"
     ADD CONSTRAINT "chat_room_member_pkey" PRIMARY KEY ("room_id", "profile_id");
 
@@ -2425,6 +2459,14 @@ ALTER TABLE ONLY "public"."student"
 
 
 CREATE INDEX "chat_message_room_created_idx" ON "public"."chat_message" USING "btree" ("room_id", "created_at" DESC);
+
+
+
+CREATE UNIQUE INDEX "chat_request_direct_unique" ON "public"."chat_request" USING "btree" ("from_id", "to_id") WHERE ("room_id" IS NULL);
+
+
+
+CREATE UNIQUE INDEX "chat_request_group_unique" ON "public"."chat_request" USING "btree" ("from_id", "to_id", "room_id") WHERE ("room_id" IS NOT NULL);
 
 
 
@@ -2803,6 +2845,11 @@ ALTER TABLE ONLY "public"."chat_message"
 
 ALTER TABLE ONLY "public"."chat_request"
     ADD CONSTRAINT "chat_request_from_id_fkey" FOREIGN KEY ("from_id") REFERENCES "public"."profiles"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."chat_request"
+    ADD CONSTRAINT "chat_request_room_id_fkey" FOREIGN KEY ("room_id") REFERENCES "public"."chat_room"("id") ON DELETE CASCADE;
 
 
 
@@ -3811,8 +3858,6 @@ ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."notice_board_post
 
 ALTER PUBLICATION "supabase_realtime" ADD TABLE ONLY "public"."notification";
 
-ALTER TABLE "public"."notification" REPLICA IDENTITY FULL;
-
 
 
 REVOKE USAGE ON SCHEMA "public" FROM PUBLIC;
@@ -4050,6 +4095,12 @@ GRANT ALL ON FUNCTION "public"."fn_hash_password"("p_password" "text") TO "servi
 GRANT ALL ON FUNCTION "public"."fn_join_room_by_code"("p_code" "text", "p_password" "text") TO "anon";
 GRANT ALL ON FUNCTION "public"."fn_join_room_by_code"("p_code" "text", "p_password" "text") TO "authenticated";
 GRANT ALL ON FUNCTION "public"."fn_join_room_by_code"("p_code" "text", "p_password" "text") TO "service_role";
+
+
+
+GRANT ALL ON FUNCTION "public"."fn_join_room_by_code"("p_code" "text", "p_password" "text", "p_user_id" "uuid") TO "anon";
+GRANT ALL ON FUNCTION "public"."fn_join_room_by_code"("p_code" "text", "p_password" "text", "p_user_id" "uuid") TO "authenticated";
+GRANT ALL ON FUNCTION "public"."fn_join_room_by_code"("p_code" "text", "p_password" "text", "p_user_id" "uuid") TO "service_role";
 
 
 

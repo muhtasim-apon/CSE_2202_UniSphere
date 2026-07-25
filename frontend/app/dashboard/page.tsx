@@ -177,8 +177,7 @@ export default async function DashboardPage() {
           <ModuleCard
             title="Chatroom"
             icon={MessageCircle}
-            iconBgClassName="bg-highlight/10"
-            iconClassName="text-highlight"
+            iconBgClassName="bg-primary-light"
             viewAllHref="/dashboard/chatroom"
             viewAllLabel="Open chat"
           >
@@ -209,8 +208,7 @@ export default async function DashboardPage() {
           <ModuleCard
             title="Classes & Materials"
             icon={BookOpen}
-            iconBgClassName="bg-highlight/10"
-            iconClassName="text-highlight"
+            iconBgClassName="bg-primary-light"
             viewAllHref="/dashboard/classes"
           >
             {recentCourses.length > 0 ? (

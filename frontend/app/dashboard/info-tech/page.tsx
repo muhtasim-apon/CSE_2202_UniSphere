@@ -18,7 +18,7 @@ function extractAtomTag(xml: string, tag: string): string {
   return (m?.[1] ?? m?.[2] ?? '').trim()
 }
 
-async function fetchArxiv(): Promise<Article[]> {
+export async function fetchArxiv(): Promise<Article[]> {
   try {
     const res = await fetch(
       'https://export.arxiv.org/api/query?search_query=cat:cs.CV+OR+cat:cs.LG+OR+cat:cs.AI+OR+cat:cs.NE&sortBy=submittedDate&sortOrder=descending&max_results=15',
@@ -59,7 +59,7 @@ async function fetchArxiv(): Promise<Article[]> {
   }
 }
 
-async function fetchDevTo(): Promise<Article[]> {
+export async function fetchDevTo(): Promise<Article[]> {
   try {
     const [res1, res2] = await Promise.all([
       fetch('https://dev.to/api/articles?per_page=15&tag=programming&top=5',
@@ -97,7 +97,7 @@ async function fetchDevTo(): Promise<Article[]> {
   }
 }
 
-async function fetchHackerNews(): Promise<Article[]> {
+export async function fetchHackerNews(): Promise<Article[]> {
   try {
     const idsRes = await fetch('https://hacker-news.firebaseio.com/v0/topstories.json', {
       cache: 'no-store',
@@ -133,7 +133,7 @@ async function fetchHackerNews(): Promise<Article[]> {
   }
 }
 
-async function fetchIeee(): Promise<Article[]> {
+export async function fetchIeee(): Promise<Article[]> {
   try {
     const res = await fetch('https://ieeexplore.ieee.org/rss/TOC10.XML', {
       headers: { 'User-Agent': 'EduHub/1.0 (university-erp; educational)' },
@@ -157,7 +157,7 @@ async function fetchIeee(): Promise<Article[]> {
   }
 }
 
-async function fetchJmlr(): Promise<Article[]> {
+export async function fetchJmlr(): Promise<Article[]> {
   try {
     const res = await fetch('https://jmlr.org/jmlr.xml', {
       headers: { 'User-Agent': 'EduHub/1.0 (university-erp; educational)' },

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
@@ -90,8 +90,9 @@ export default function InfoTechClient({ articles }: { articles: Article[] }) {
   const [selectedSources, setSelectedSources] = useState<Set<string>>(new Set())
   const [visibleCount, setVisibleCount] = useState(15)
   const [expandedHero, setExpandedHero] = useState(false)
-  const [lastUpdated] = useState(() => new Date())
+  const [lastUpdated, setLastUpdated] = useState(() => new Date())
   const [showRefreshBanner, setShowRefreshBanner] = useState(false)
+  const [isPending, startTransition] = useTransition()
 
   useEffect(() => {
     const timer = setTimeout(() => setShowRefreshBanner(true), 5 * 60 * 1000)
@@ -100,7 +101,10 @@ export default function InfoTechClient({ articles }: { articles: Article[] }) {
 
   function handleRefresh() {
     setShowRefreshBanner(false)
-    router.refresh()
+    startTransition(() => {
+      router.refresh()
+      setLastUpdated(new Date())
+    })
   }
 
   const filtered = articles.filter(a => {
@@ -156,9 +160,10 @@ export default function InfoTechClient({ articles }: { articles: Article[] }) {
             <span className="text-sm font-medium text-text-primary">New articles available</span>
             <button
               onClick={handleRefresh}
-              className="rounded-lg bg-cta px-3 py-1 text-xs font-semibold text-cta-text hover:opacity-90"
+              disabled={isPending}
+              className="rounded-lg bg-cta px-3 py-1 text-xs font-semibold text-cta-text hover:opacity-90 disabled:opacity-50"
             >
-              Refresh
+              {isPending ? 'Refreshing...' : 'Refresh'}
             </button>
             <button onClick={() => setShowRefreshBanner(false)} className="text-text-muted hover:text-primary">
               <X className="h-4 w-4" />
@@ -200,10 +205,11 @@ export default function InfoTechClient({ articles }: { articles: Article[] }) {
                 </span>
                 <button
                   onClick={handleRefresh}
-                  className="flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm font-medium text-white transition hover:bg-white/20"
+                  disabled={isPending}
+                  className="flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-3 py-2 text-sm font-medium text-white transition hover:bg-white/20 disabled:opacity-50"
                 >
-                  <RefreshCw className="h-4 w-4" />
-                  Refresh
+                  <RefreshCw className={`h-4 w-4 ${isPending ? 'animate-spin' : ''}`} />
+                  {isPending ? 'Refreshing...' : 'Refresh'}
                 </button>
               </div>
             </div>

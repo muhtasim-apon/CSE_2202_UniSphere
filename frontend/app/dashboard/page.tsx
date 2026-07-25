@@ -11,6 +11,7 @@ import SignOutButton from './sign-out-button'
 import DashboardShell from './components/DashboardShell'
 import ModuleCard from './components/ModuleCard'
 import ProjectsModuleCard from './components/ProjectsModuleCard'
+import { fetchArxiv, fetchDevTo, fetchHackerNews, fetchIeee, fetchJmlr } from './info-tech/page'
 
 function formatRelativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
@@ -32,7 +33,7 @@ type ChatRoom = {
   last_message?: { body: string | null; created_at: string } | null
 }
 type ManualCourse = { manual_course_id: number; course_name: string; course_code: string | null }
-type Article = { id: string; title: string; description: string; url: string; source: string; publishedAt: string }
+type Article = { id: string; title: string; description: string; url: string; source: string; publishedAt: string; authors?: string[] }
 type AchievementItem = { id: number; title: string; type: 'project' | 'certificate' | 'research_paper'; created_at: string }
 
 export default async function DashboardPage() {
@@ -60,7 +61,7 @@ export default async function DashboardPage() {
     const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
     const auth = { Authorization: `Bearer ${session.access_token}` }
 
-    const [noticesRes, roomsRes, coursesRes, projectsRes, certsRes, papersRes, devToRes] =
+    const [noticesRes, roomsRes, coursesRes, projectsRes, certsRes, papersRes, arxivFeed, devToFeed, hnFeed, ieeeFeed, jmlrFeed] =
       await Promise.allSettled([
         fetch(`${BASE}/api/notices?page=1&limit=2`, { headers: auth, cache: 'no-store' }),
         fetch(`${BASE}/api/chat/rooms`, { headers: auth, cache: 'no-store' }),
@@ -68,7 +69,11 @@ export default async function DashboardPage() {
         fetch(`${BASE}/api/achievements/projects?page=1&limit=3`, { headers: auth, cache: 'no-store' }),
         fetch(`${BASE}/api/achievements/certificates?page=1&limit=3`, { headers: auth, cache: 'no-store' }),
         fetch(`${BASE}/api/achievements/papers?page=1&limit=3`, { headers: auth, cache: 'no-store' }),
-        fetch('https://dev.to/api/articles?per_page=5&tag=programming&top=3', { cache: 'no-store' }),
+        fetchArxiv(),
+        fetchDevTo(),
+        fetchHackerNews(),
+        fetchIeee(),
+        fetchJmlr(),
       ])
 
     if (noticesRes.status === 'fulfilled' && noticesRes.value.ok) {
@@ -89,17 +94,29 @@ export default async function DashboardPage() {
       recentCourses = (data.courses ?? []).slice(0, 2)
     }
 
-    if (devToRes.status === 'fulfilled' && devToRes.value.ok) {
-      const data: any[] = await devToRes.value.json()
-      recentArticles = data.slice(0, 2).map(item => ({
-        id: String(item.id),
-        title: item.title ?? '',
-        description: (item.description ?? '').slice(0, 140),
-        url: item.url ?? '',
-        source: 'Dev.to',
-        publishedAt: item.published_at ?? '',
-      }))
-    }
+    const allFeeds = [
+      ...(arxivFeed.status === 'fulfilled' ? arxivFeed.value : []),
+      ...(devToFeed.status === 'fulfilled' ? devToFeed.value : []),
+      ...(hnFeed.status === 'fulfilled' ? hnFeed.value : []),
+      ...(ieeeFeed.status === 'fulfilled' ? ieeeFeed.value : []),
+      ...(jmlrFeed.status === 'fulfilled' ? jmlrFeed.value : []),
+    ]
+
+    const seen = new Set<string>()
+    const deduped = allFeeds.filter(a => {
+      if (!a.url || !a.title) return false
+      if (seen.has(a.url)) return false
+      seen.add(a.url)
+      return true
+    })
+
+    deduped.sort((a, b) => {
+      const da = a.publishedAt ? new Date(a.publishedAt).getTime() : 0
+      const db = b.publishedAt ? new Date(b.publishedAt).getTime() : 0
+      return db - da
+    })
+
+    recentArticles = deduped.slice(0, 3)
 
     const achievementItems: AchievementItem[] = []
     if (projectsRes.status === 'fulfilled' && projectsRes.value.ok) {
@@ -240,7 +257,10 @@ export default async function DashboardPage() {
                 {recentArticles.map((article) => (
                   <li key={article.id} className="text-sm">
                     <p className="text-text-primary">{article.title}</p>
-                    <p className="text-xs text-text-muted">{article.source}</p>
+                    <p className="text-xs text-text-muted">
+                      {article.source}
+                      {article.authors && article.authors.length > 0 && ` · By ${article.authors.slice(0, 2).join(', ')}`}
+                    </p>
                   </li>
                 ))}
               </ul>

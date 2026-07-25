@@ -187,7 +187,7 @@ export default function ChatWindow({ roomId, roomType, roomTitle, roomAvatar, ro
     } else if (shouldScrollRef.current) {
       el.scrollTop = el.scrollHeight
     }
-  }, [messages.length])
+  }, [messages.length, typers.length])
 
   const { sendTyping } = useChatRealtime({
     roomId,

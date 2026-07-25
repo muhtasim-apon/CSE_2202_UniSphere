@@ -65,7 +65,7 @@ The backend is a stateless FastAPI service in front of Supabase (Postgres + Auth
 
 **Backend** — FastAPI · Uvicorn · PyJWT (Supabase JWKS verification) · `python-dotenv` · `supabase-py` (service-role client)
 
-**Database & Platform** — Supabase (PostgreSQL, Auth, Storage, Realtime) · 43-table schema with 72 enforced foreign keys ([full ER diagram](.agents/er-final-updated.png))
+**Database & Platform** — Supabase (PostgreSQL, Auth, Storage, Realtime) · 43-table schema with 72 enforced foreign keys.
 
 ## Architecture
 

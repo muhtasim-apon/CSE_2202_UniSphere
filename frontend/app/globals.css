@@ -87,3 +87,43 @@ body,
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Custom Scrollbar Styles */
+@layer base {
+  /* Firefox */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(100, 116, 139, 0.2) transparent;
+  }
+
+  .dark * {
+    scrollbar-color: rgba(248, 250, 252, 0.15) transparent;
+  }
+
+  /* WebKit/Blink (Chrome, Safari, Edge) */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background-color: rgba(100, 116, 139, 0.2);
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(100, 116, 139, 0.4);
+  }
+
+  .dark ::-webkit-scrollbar-thumb {
+    background-color: rgba(248, 250, 252, 0.15);
+  }
+
+  .dark ::-webkit-scrollbar-thumb:hover {
+    background-color: rgba(248, 250, 252, 0.3);
+  }
+}

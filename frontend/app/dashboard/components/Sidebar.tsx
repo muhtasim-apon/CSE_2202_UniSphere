@@ -48,7 +48,7 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile, activeIt
       )}
 
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r border-border bg-card transition-all duration-theme md:static md:translate-x-0 md:flex-shrink-0
+        className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r border-border bg-card transition-all duration-theme md:sticky md:top-0 md:h-screen md:translate-x-0 md:flex-shrink-0
           ${collapsed ? 'md:w-16' : 'md:w-60'}
           ${mobileOpen ? 'w-60 translate-x-0' : '-translate-x-full md:translate-x-0'}
         `}
@@ -83,7 +83,7 @@ export default function Sidebar({ collapsed, mobileOpen, onCloseMobile, activeIt
                     `}
                   >
                     <Icon className="h-5 w-5 flex-shrink-0" />
-                    <span className={`${collapsed ? 'md:hidden' : ''}`}>{item.label}</span>
+                    <span className={`whitespace-nowrap ${collapsed ? 'md:hidden' : ''}`}>{item.label}</span>
                   </Link>
                 </li>
               )

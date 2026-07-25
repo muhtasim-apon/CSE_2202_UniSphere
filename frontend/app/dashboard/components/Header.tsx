@@ -49,7 +49,7 @@ export default function Header({
   const { notifications, unreadCount, markAllRead, clearAll, markRead, removeNotification } = useNotifications()
 
   return (
-    <header className="relative flex items-center justify-between border-b border-border bg-card px-4 py-3 md:px-6">
+    <header className="sticky top-0 z-30 flex items-center justify-between border-b border-border bg-card px-4 py-3 md:px-6">
       <Link
         href="/dashboard"
         className="absolute left-1/2 top-1/2 hidden -translate-x-1/2 -translate-y-1/2 items-center gap-2 sm:flex"

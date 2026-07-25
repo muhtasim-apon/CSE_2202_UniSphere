@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="frontend/public/favicon.svg" alt="UniSphere Icon" width="48" height="48" />
+
 <img src="frontend/public/brand/logo.png" alt="UniSphere logo" width="420" />
 
 **A unified digital campus for the Department of CSE, University of Dhaka.**

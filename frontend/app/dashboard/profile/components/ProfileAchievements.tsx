@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Folder, Award, FileText, Pencil } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { getProjects, getCertificates, getPapers, type Project, type Certificate, type ResearchPaper } from '@/app/lib/achievementsApi'
@@ -17,6 +17,7 @@ type CompactItem = {
   thumbnailUrl?: string | null
   date: string
   cardData: AchievementCardData
+  originalData: Project | Certificate | ResearchPaper
 }
 
 const TYPE_BADGE: Record<string, string> = {
@@ -40,9 +41,43 @@ export default function ProfileAchievements({ userId }: Props) {
   const [items, setItems] = useState<CompactItem[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedCard, setSelectedCard] = useState<AchievementCardData | null>(null)
-  const [editModal, setEditModal] = useState<'project' | 'certificate' | 'paper' | null>(null)
+  const [editingItem, setEditingItem] = useState<CompactItem | null>(null)
   const [isOwner, setIsOwner] = useState(false)
   const [userName, setUserName] = useState('')
+
+  const loadData = useCallback(async (t: string) => {
+    if (!t) return
+    try {
+      const [pr, cr, pa] = await Promise.all([
+        getProjects(t, userId),
+        getCertificates(t, userId),
+        getPapers(t, userId),
+      ])
+
+      const all: CompactItem[] = [
+        ...pr.projects.map((p: Project) => ({
+          id: p.project_id, type: 'project' as const, title: p.title,
+          subtitle: p.associated_with, thumbnailUrl: p.thumbnail_url, date: p.created_at,
+          cardData: { id: p.project_id, type: 'project' as const, title: p.title, subtitle: p.associated_with, description: p.description, thumbnailUrl: p.thumbnail_url, githubUrl: p.github_url, liveDemoUrl: p.live_demo_url, skills: p.skills, reactions: p.reactions, avgRating: p.avg_rating, commentCount: p.comment_count, authorName: p.author_name, authorAvatar: p.author_avatar_url, media: p.media, relativeDate: new Date(p.created_at).toLocaleDateString(), userId: p.user_id } as AchievementCardData,
+          originalData: p,
+        })),
+        ...cr.certificates.map((c: Certificate) => ({
+          id: c.certificate_id, type: 'certificate' as const, title: c.cert_name,
+          subtitle: c.issuing_org, date: c.created_at,
+          cardData: { id: c.certificate_id, type: 'certificate' as const, title: c.cert_name, subtitle: c.issuing_org, skills: c.skills, reactions: c.reactions, avgRating: c.avg_rating, commentCount: c.comment_count, authorName: c.author_name, authorAvatar: c.author_avatar_url, media: c.media, relativeDate: new Date(c.created_at).toLocaleDateString(), userId: c.user_id } as AchievementCardData,
+          originalData: c,
+        })),
+        ...pa.papers.map((p: ResearchPaper) => ({
+          id: p.paper_id, type: 'research_paper' as const, title: p.title,
+          subtitle: p.journal_name || p.conference_name, date: p.created_at,
+          cardData: { id: p.paper_id, type: 'research_paper' as const, title: p.title, subtitle: p.journal_name || p.conference_name, description: p.abstract, scholarUrl: p.scholar_url, skills: p.keywords, reactions: p.reactions, avgRating: p.avg_rating, commentCount: p.comment_count, authorName: p.author_name, authorAvatar: p.author_avatar_url, media: p.media, relativeDate: new Date(p.created_at).toLocaleDateString(), userId: p.user_id } as AchievementCardData,
+          originalData: p,
+        })),
+      ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+
+      setItems(all)
+    } catch {}
+  }, [userId])
 
   useEffect(() => {
     const supabase = createClient()
@@ -54,36 +89,10 @@ export default function ProfileAchievements({ userId }: Props) {
       const profile = await supabase.from('profiles').select('first_name, last_name').eq('id', session.user.id).single()
       setUserName(`${profile.data?.first_name ?? ''} ${profile.data?.last_name ?? ''}`.trim())
 
-      try {
-        const [pr, cr, pa] = await Promise.all([
-          getProjects(session.access_token, userId),
-          getCertificates(session.access_token, userId),
-          getPapers(session.access_token, userId),
-        ])
-
-        const all: CompactItem[] = [
-          ...pr.projects.map((p: Project) => ({
-            id: p.project_id, type: 'project' as const, title: p.title,
-            subtitle: p.associated_with, thumbnailUrl: p.thumbnail_url, date: p.created_at,
-            cardData: { id: p.project_id, type: 'project' as const, title: p.title, subtitle: p.associated_with, description: p.description, thumbnailUrl: p.thumbnail_url, githubUrl: p.github_url, liveDemoUrl: p.live_demo_url, skills: p.skills, reactions: p.reactions, avgRating: p.avg_rating, commentCount: p.comment_count, authorName: p.author_name, media: p.media, relativeDate: new Date(p.created_at).toLocaleDateString(), userId: p.user_id } as AchievementCardData,
-          })),
-          ...cr.certificates.map((c: Certificate) => ({
-            id: c.certificate_id, type: 'certificate' as const, title: c.cert_name,
-            subtitle: c.issuing_org, date: c.created_at,
-            cardData: { id: c.certificate_id, type: 'certificate' as const, title: c.cert_name, subtitle: c.issuing_org, skills: c.skills, reactions: c.reactions, avgRating: c.avg_rating, commentCount: c.comment_count, authorName: c.author_name, media: c.media, relativeDate: new Date(c.created_at).toLocaleDateString(), userId: c.user_id } as AchievementCardData,
-          })),
-          ...pa.papers.map((p: ResearchPaper) => ({
-            id: p.paper_id, type: 'research_paper' as const, title: p.title,
-            subtitle: p.journal_name || p.conference_name, date: p.created_at,
-            cardData: { id: p.paper_id, type: 'research_paper' as const, title: p.title, subtitle: p.journal_name || p.conference_name, description: p.abstract, scholarUrl: p.scholar_url, skills: p.keywords, reactions: p.reactions, avgRating: p.avg_rating, commentCount: p.comment_count, authorName: p.author_name, media: p.media, relativeDate: new Date(p.created_at).toLocaleDateString(), userId: p.user_id } as AchievementCardData,
-          })),
-        ].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-
-        setItems(all)
-      } catch {}
+      await loadData(session.access_token)
       setLoading(false)
     })
-  }, [userId])
+  }, [userId, loadData])
 
   if (loading) return (
     <div className="mt-8">
@@ -112,7 +121,7 @@ export default function ProfileAchievements({ userId }: Props) {
               >
                 {isOwner && (
                   <button
-                    onClick={e => { e.stopPropagation(); setEditModal(item.type === 'research_paper' ? 'paper' : item.type) }}
+                    onClick={e => { e.stopPropagation(); setEditingItem(item) }}
                     className="absolute right-3 top-3 rounded-lg border border-border bg-card p-1.5 text-text-muted transition hover:border-primary hover:text-primary"
                   >
                     <Pencil className="h-3.5 w-3.5" />
@@ -150,14 +159,39 @@ export default function ProfileAchievements({ userId }: Props) {
       )}
 
       {/* Edit modals */}
-      {editModal === 'project' && token && (
-        <AddProjectModal token={token} onClose={() => setEditModal(null)} onSuccess={() => setEditModal(null)} />
+      {editingItem?.type === 'project' && token && (
+        <AddProjectModal
+          token={token}
+          project={editingItem.originalData as Project}
+          onClose={() => setEditingItem(null)}
+          onSuccess={async () => {
+            await loadData(token)
+            setEditingItem(null)
+          }}
+        />
       )}
-      {editModal === 'certificate' && token && (
-        <AddCertificateModal token={token} onClose={() => setEditModal(null)} onSuccess={() => setEditModal(null)} />
+      {editingItem?.type === 'certificate' && token && (
+        <AddCertificateModal
+          token={token}
+          certificate={editingItem.originalData as Certificate}
+          onClose={() => setEditingItem(null)}
+          onSuccess={async () => {
+            await loadData(token)
+            setEditingItem(null)
+          }}
+        />
       )}
-      {editModal === 'paper' && token && (
-        <AddResearchPaperModal token={token} currentUserName={userName} onClose={() => setEditModal(null)} onSuccess={() => setEditModal(null)} />
+      {editingItem?.type === 'research_paper' && token && (
+        <AddResearchPaperModal
+          token={token}
+          currentUserName={userName}
+          paper={editingItem.originalData as ResearchPaper}
+          onClose={() => setEditingItem(null)}
+          onSuccess={async () => {
+            await loadData(token)
+            setEditingItem(null)
+          }}
+        />
       )}
     </div>
   )

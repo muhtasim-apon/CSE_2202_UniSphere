@@ -11,7 +11,7 @@ import SignOutButton from './sign-out-button'
 import DashboardShell from './components/DashboardShell'
 import ModuleCard from './components/ModuleCard'
 import ProjectsModuleCard from './components/ProjectsModuleCard'
-import { fetchArxiv, fetchDevTo, fetchHackerNews, fetchIeee, fetchJmlr } from './info-tech/page'
+import { fetchArxiv, fetchDevTo, fetchHackerNews, fetchIeee, fetchJmlr } from './info-tech/fetchers'
 
 function formatRelativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
@@ -279,7 +279,7 @@ export default async function DashboardPage() {
             )}
           </ModuleCard>
 
-          <ProjectsModuleCard />
+          <ProjectsModuleCard currentUserAvatar={profile?.avatar_url} />
 
           <ModuleCard
             title="Achievements"

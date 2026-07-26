@@ -39,7 +39,11 @@ function relDate(iso: string): string {
   return new Date(iso).toLocaleDateString()
 }
 
-export default function ProjectsModuleCard() {
+type ProjectsModuleCardProps = {
+  currentUserAvatar?: string | null
+}
+
+export default function ProjectsModuleCard({ currentUserAvatar }: ProjectsModuleCardProps) {
   const [token, setToken] = useState('')
   const [userName, setUserName] = useState('')
   const [recent, setRecent] = useState<RecentItem[]>([])
@@ -80,6 +84,7 @@ export default function ProjectsModuleCard() {
             avgRating: p.avg_rating,
             commentCount: p.comment_count,
             authorName: p.author_name,
+            authorAvatar: p.author_avatar_url,
             media: p.media,
             relativeDate: new Date(p.created_at).toLocaleDateString(),
             userId: p.user_id,
@@ -95,7 +100,7 @@ export default function ProjectsModuleCard() {
     getProjects(token, undefined, 1).then((pr) => {
       const items: RecentItem[] = pr.projects.map((p: Project) => ({
         id: p.project_id, type: 'project' as const, title: p.title, thumbnailUrl: p.thumbnail_url, date: p.created_at,
-        cardData: { id: p.project_id, type: 'project' as const, title: p.title, subtitle: p.associated_with, description: p.description, thumbnailUrl: p.thumbnail_url, githubUrl: p.github_url, liveDemoUrl: p.live_demo_url, skills: p.skills, reactions: p.reactions, avgRating: p.avg_rating, commentCount: p.comment_count, authorName: p.author_name, media: p.media, relativeDate: new Date(p.created_at).toLocaleDateString(), userId: p.user_id } as AchievementCardData,
+        cardData: { id: p.project_id, type: 'project' as const, title: p.title, subtitle: p.associated_with, description: p.description, thumbnailUrl: p.thumbnail_url, githubUrl: p.github_url, liveDemoUrl: p.live_demo_url, skills: p.skills, reactions: p.reactions, avgRating: p.avg_rating, commentCount: p.comment_count, authorName: p.author_name, authorAvatar: p.author_avatar_url, media: p.media, relativeDate: new Date(p.created_at).toLocaleDateString(), userId: p.user_id } as AchievementCardData,
       }))
       setRecent(items.slice(0, 3))
     }).catch(() => {})
@@ -170,7 +175,7 @@ export default function ProjectsModuleCard() {
             >
               <X className="h-4 w-4" />
             </button>
-            <AchievementCard data={selectedCard} token={token} />
+            <AchievementCard data={selectedCard} token={token} currentUserName={userName} currentUserAvatar={currentUserAvatar} />
           </div>
         </div>
       )}

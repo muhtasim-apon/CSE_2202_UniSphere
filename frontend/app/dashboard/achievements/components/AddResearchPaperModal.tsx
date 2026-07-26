@@ -2,7 +2,7 @@
 
 import { useState, useRef } from 'react'
 import { X, FileText, Upload, Plus, Trash2 } from 'lucide-react'
-import { createPaper, uploadPaperMedia } from '@/app/lib/achievementsApi'
+import { createPaper, updatePaper, uploadPaperMedia, type ResearchPaper } from '@/app/lib/achievementsApi'
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
 const CURRENT_YEAR = new Date().getFullYear()
@@ -15,26 +15,31 @@ type Props = {
   currentUserName?: string
   onClose: () => void
   onSuccess: () => void
+  paper?: ResearchPaper
 }
 
-export default function AddResearchPaperModal({ token, currentUserName = '', onClose, onSuccess }: Props) {
+export default function AddResearchPaperModal({ token, currentUserName = '', onClose, onSuccess, paper }: Props) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
-  const [title, setTitle] = useState('')
-  const [abstract, setAbstract] = useState('')
-  const [venueType, setVenueType] = useState<'journal' | 'conference'>('journal')
-  const [journalName, setJournalName] = useState('')
-  const [conferenceName, setConferenceName] = useState('')
-  const [doi, setDoi] = useState('')
-  const [paperUrl, setPaperUrl] = useState('')
-  const [scholarUrl, setScholarUrl] = useState('')
-  const [publishMonth, setPublishMonth] = useState('')
-  const [publishYear, setPublishYear] = useState('')
-  const [authors, setAuthors] = useState<Author[]>([
-    { author_name: currentUserName, author_order: 1, is_corresponding: true },
-  ])
-  const [skillNames, setSkillNames] = useState<string[]>([])
+  const [title, setTitle] = useState(paper?.title || '')
+  const [abstract, setAbstract] = useState(paper?.abstract || '')
+  const [venueType, setVenueType] = useState<'journal' | 'conference'>(
+    paper?.conference_name ? 'conference' : 'journal'
+  )
+  const [journalName, setJournalName] = useState(paper?.journal_name || '')
+  const [conferenceName, setConferenceName] = useState(paper?.conference_name || '')
+  const [doi, setDoi] = useState(paper?.doi || '')
+  const [paperUrl, setPaperUrl] = useState(paper?.paper_url || '')
+  const [scholarUrl, setScholarUrl] = useState(paper?.scholar_url || '')
+  const [publishMonth, setPublishMonth] = useState(paper?.publish_month ? String(paper.publish_month) : '')
+  const [publishYear, setPublishYear] = useState(paper?.publish_year ? String(paper.publish_year) : '')
+  const [authors, setAuthors] = useState<Author[]>(
+    paper?.authors && paper.authors.length > 0
+      ? paper.authors
+      : [{ author_name: currentUserName, author_order: 1, is_corresponding: true }]
+  )
+  const [skillNames, setSkillNames] = useState<string[]>(paper?.keywords?.map(k => k.skill_name) || [])
   const [skillInput, setSkillInput] = useState('')
   const [mediaFiles, setMediaFiles] = useState<File[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -72,7 +77,7 @@ export default function AddResearchPaperModal({ token, currentUserName = '', onC
     setSaving(true)
     setError('')
     try {
-      const paper = await createPaper(token, {
+      const payload = {
         title: title.trim(),
         abstract: abstract || undefined,
         journal_name: venueType === 'journal' ? journalName || undefined : undefined,
@@ -84,8 +89,16 @@ export default function AddResearchPaperModal({ token, currentUserName = '', onC
         publish_year: publishYear ? parseInt(publishYear) : undefined,
         skill_names: skillNames,
         authors: authors.filter(a => a.author_name.trim()),
-      })
-      await Promise.all(mediaFiles.map(f => uploadPaperMedia(token, paper.paper_id, f)))
+      }
+
+      let savedPaper
+      if (paper) {
+        savedPaper = await updatePaper(token, paper.paper_id, payload)
+      } else {
+        savedPaper = await createPaper(token, payload)
+      }
+
+      await Promise.all(mediaFiles.map(f => uploadPaperMedia(token, savedPaper.paper_id, f)))
       onSuccess()
       onClose()
     } catch (e: unknown) {
@@ -105,7 +118,7 @@ export default function AddResearchPaperModal({ token, currentUserName = '', onC
           <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-50">
             <FileText className="h-5 w-5 text-purple-700" />
           </span>
-          <h2 className="font-display text-xl font-bold text-text-primary">Add Research Paper</h2>
+          <h2 className="font-display text-xl font-bold text-text-primary">{paper ? 'Edit Research Paper' : 'Add Research Paper'}</h2>
         </div>
 
         {error && <p className="mb-4 rounded-xl bg-red-50 px-4 py-2 text-sm text-red-600">{error}</p>}

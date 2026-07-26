@@ -53,6 +53,17 @@ def _detect_file_type(mime: str, ext: str) -> str:
     return "other"
 
 
+def _delete_storage_file(file_url: str):
+    try:
+        parts = file_url.split("/public/achievement-media/")
+        if len(parts) > 1:
+            storage_path = parts[1]
+            _supabase.storage.from_("achievement-media").remove(storage_path)
+            print(f"DEBUG: Successfully removed file from Supabase storage: {storage_path}")
+    except Exception as e:
+        print(f"DEBUG: Failed to remove file from Supabase storage: {e}")
+
+
 def _enrich_list(items: list, achievement_type: str, id_field: str) -> list:
     """Attach skills, reactions, rating, comment count, author name, and media to each item."""
     if not items:
@@ -581,7 +592,45 @@ async def delete_project_media(
     existing = _supabase.table("project").select("user_id").eq("project_id", project_id).maybe_single().execute()
     if not existing or not existing.data or existing.data["user_id"] != db_user_id:
         raise HTTPException(status_code=403, detail="Not authorized")
-    _supabase.table("project_media").delete().eq("media_id", media_id).eq("project_id", project_id).execute()
+    del_res = _supabase.table("project_media").delete().eq("media_id", media_id).eq("project_id", project_id).execute()
+    if del_res and del_res.data:
+        _delete_storage_file(del_res.data[0]["file_url"])
+
+
+@router.delete("/certificates/{certificate_id}/media/{media_id}", status_code=204)
+async def delete_certificate_media(
+    certificate_id: int,
+    media_id: int,
+    authorization: Optional[str] = Header(default=None),
+):
+    user = await _auth(authorization)
+    db_user_id = _user_id(user)
+    print(f"DEBUG: delete_certificate_media certificate_id={certificate_id} media_id={media_id}")
+    existing = _supabase.table("certificate").select("user_id").eq("certificate_id", certificate_id).maybe_single().execute()
+    print(f"DEBUG: existing.data={existing.data if existing else None}")
+    if not existing or not existing.data or existing.data["user_id"] != db_user_id:
+        print("DEBUG: raise 403 not authorized")
+        raise HTTPException(status_code=403, detail="Not authorized")
+    del_res = _supabase.table("certificate_media").delete().eq("media_id", media_id).eq("certificate_id", certificate_id).execute()
+    print(f"DEBUG: del_res.data={del_res.data if del_res else None}")
+    if del_res and del_res.data:
+        _delete_storage_file(del_res.data[0]["file_url"])
+
+
+@router.delete("/papers/{paper_id}/media/{media_id}", status_code=204)
+async def delete_paper_media(
+    paper_id: int,
+    media_id: int,
+    authorization: Optional[str] = Header(default=None),
+):
+    user = await _auth(authorization)
+    db_user_id = _user_id(user)
+    existing = _supabase.table("research_paper").select("user_id").eq("paper_id", paper_id).maybe_single().execute()
+    if not existing or not existing.data or existing.data["user_id"] != db_user_id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    del_res = _supabase.table("research_paper_media").delete().eq("media_id", media_id).eq("paper_id", paper_id).execute()
+    if del_res and del_res.data:
+        _delete_storage_file(del_res.data[0]["file_url"])
 
 
 # ── CERTIFICATE ENDPOINTS ─────────────────────────────────────────────────────

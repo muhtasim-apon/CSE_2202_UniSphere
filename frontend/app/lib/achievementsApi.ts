@@ -92,6 +92,7 @@ export type ResearchPaper = {
   author_name?: string
   author_avatar_url?: string | null
   media?: MediaItem[]
+  authors?: { author_name: string; author_order: number; is_corresponding: boolean }[]
 }
 
 export type Hackathon = {
@@ -256,6 +257,20 @@ export async function uploadProjectMedia(token: string, projectId: number, file:
 
 export async function deleteProjectMedia(token: string, projectId: number, mediaId: number): Promise<void> {
   await apiFetch(`${BASE}/api/achievements/projects/${projectId}/media/${mediaId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+}
+
+export async function deleteCertificateMedia(token: string, certId: number, mediaId: number): Promise<void> {
+  await apiFetch(`${BASE}/api/achievements/certificates/${certId}/media/${mediaId}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+}
+
+export async function deletePaperMedia(token: string, paperId: number, mediaId: number): Promise<void> {
+  await apiFetch(`${BASE}/api/achievements/papers/${paperId}/media/${mediaId}`, {
     method: 'DELETE',
     headers: { Authorization: `Bearer ${token}` },
   })

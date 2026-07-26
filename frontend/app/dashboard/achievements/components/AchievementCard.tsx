@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Code, ExternalLink, BookOpen, Star, MessageCircle, ChevronDown, ChevronUp, Send, X } from 'lucide-react'
+import { Code, ExternalLink, BookOpen, Star, MessageCircle, ChevronDown, ChevronUp, Send, X, Play } from 'lucide-react'
 import { toggleReaction, postComment, rateAchievement, getComments, type AchievementComment } from '@/app/lib/achievementsApi'
 
 type AchievementType = 'project' | 'certificate' | 'research_paper'
@@ -87,6 +87,7 @@ export default function AchievementCard({ data, token, currentDbUserId, currentU
   const [myRating, setMyRating] = useState(0)
   const ratingRef = useRef<HTMLDivElement>(null)
   const [lightbox, setLightbox] = useState<string | null>(null)
+  const [playingMediaId, setPlayingMediaId] = useState<number | null>(null)
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
@@ -260,31 +261,72 @@ export default function AchievementCard({ data, token, currentDbUserId, currentU
       {/* Media */}
       {data.media && data.media.length > 0 && (
         <div className={`mb-3 grid gap-2 ${data.media.length === 1 ? 'grid-cols-1' : 'grid-cols-2'}`}>
-          {data.media.map((m) =>
-            m.file_type === 'image' ? (
-              <button
-                key={m.media_id}
-                onClick={() => setLightbox(m.file_url)}
-                className="overflow-hidden rounded-xl"
-              >
-                <img
-                  src={m.file_url}
-                  alt={m.file_name}
-                  className="w-full rounded-xl object-cover transition hover:opacity-80"
-                />
-              </button>
-            ) : (
-              <a
-                key={m.media_id}
-                href={m.file_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-center rounded-xl border border-border bg-background px-4 py-8 text-xs text-text-muted transition hover:border-primary hover:text-primary"
-              >
-                {m.file_name || m.file_type}
-              </a>
-            ),
-          )}
+          {data.media.map((m) => {
+            if (m.file_type === 'image') {
+              return (
+                <button
+                  key={m.media_id}
+                  onClick={() => setLightbox(m.file_url)}
+                  className="overflow-hidden rounded-xl focus:outline-none"
+                >
+                  <img
+                    src={m.file_url}
+                    alt={m.file_name}
+                    className="w-full rounded-xl object-cover transition hover:opacity-80"
+                  />
+                </button>
+              )
+            } else if (m.file_type === 'video') {
+              const isPlaying = playingMediaId === m.media_id
+              if (isPlaying) {
+                return (
+                  <div
+                    key={m.media_id}
+                    className="overflow-hidden rounded-xl bg-black aspect-video w-full border border-border"
+                  >
+                    <video
+                      src={m.file_url}
+                      controls
+                      autoPlay
+                      poster={data.thumbnailUrl || undefined}
+                      className="w-full h-full object-contain"
+                    />
+                  </div>
+                )
+              }
+              return (
+                <button
+                  key={m.media_id}
+                  onClick={() => setPlayingMediaId(m.media_id)}
+                  className="group relative overflow-hidden rounded-xl bg-black aspect-video flex items-center justify-center border border-border transition hover:opacity-95 focus:outline-none w-full"
+                >
+                  <video
+                    src={m.file_url}
+                    preload="metadata"
+                    poster={data.thumbnailUrl || undefined}
+                    className="w-full h-full rounded-xl object-cover opacity-80"
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/30 group-hover:bg-black/45 transition">
+                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-white/90 text-black shadow-lg transition group-hover:scale-110 group-hover:bg-white">
+                      <Play className="h-5 w-5 fill-current ml-0.5" />
+                    </div>
+                  </div>
+                </button>
+              )
+            } else {
+              return (
+                <a
+                  key={m.media_id}
+                  href={m.file_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center justify-center rounded-xl border border-border bg-background px-4 py-8 text-xs text-text-muted transition hover:border-primary hover:text-primary"
+                >
+                  {m.file_name || m.file_type}
+                </a>
+              )
+            }
+          })}
         </div>
       )}
 

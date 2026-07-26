@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef } from 'react'
 import { X, Folder, Upload, ChevronLeft } from 'lucide-react'
-import { createProject, uploadProjectMedia } from '@/app/lib/achievementsApi'
+import { createProject, updateProject, uploadProjectMedia, deleteProjectMedia, type Project, type MediaItem } from '@/app/lib/achievementsApi'
 
 const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
 const CURRENT_YEAR = new Date().getFullYear()
@@ -12,36 +12,41 @@ type Props = {
   token: string
   onClose: () => void
   onSuccess: () => void
+  project?: Project
 }
 
-export default function AddProjectModal({ token, onClose, onSuccess }: Props) {
+export default function AddProjectModal({ token, onClose, onSuccess, project }: Props) {
   const [step, setStep] = useState(1)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
   // Step 1
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
+  const [title, setTitle] = useState(project?.title || '')
+  const [description, setDescription] = useState(project?.description || '')
   const [thumbnail, setThumbnail] = useState<File | null>(null)
-  const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(null)
-  const [githubUrl, setGithubUrl] = useState('')
-  const [liveDemoUrl, setLiveDemoUrl] = useState('')
-  const [isCurrent, setIsCurrent] = useState(false)
-  const [startMonth, setStartMonth] = useState('')
-  const [startYear, setStartYear] = useState('')
-  const [endMonth, setEndMonth] = useState('')
-  const [endYear, setEndYear] = useState('')
-  const [associatedWith, setAssociatedWith] = useState('')
+  const [thumbnailPreview, setThumbnailPreview] = useState<string | null>(project?.thumbnail_url || null)
+  const [githubUrl, setGithubUrl] = useState(project?.github_url || '')
+  const [liveDemoUrl, setLiveDemoUrl] = useState(project?.live_demo_url || '')
+  const [isCurrent, setIsCurrent] = useState(project?.is_current || false)
+  const [startMonth, setStartMonth] = useState(project?.start_month ? String(project.start_month) : '')
+  const [startYear, setStartYear] = useState(project?.start_year ? String(project.start_year) : '')
+  const [endMonth, setEndMonth] = useState(project?.end_month ? String(project.end_month) : '')
+  const [endYear, setEndYear] = useState(project?.end_year ? String(project.end_year) : '')
+  const [associatedWith, setAssociatedWith] = useState(project?.associated_with || '')
 
   // Step 2
-  const [skillNames, setSkillNames] = useState<string[]>([])
+  const [skillNames, setSkillNames] = useState<string[]>(project?.skills?.map(s => s.skill_name) || [])
   const [skillInput, setSkillInput] = useState('')
   const [mediaFiles, setMediaFiles] = useState<File[]>([])
+  const [existingMedia, setExistingMedia] = useState<MediaItem[]>(project?.media || [])
+  const [deletedMediaIds, setDeletedMediaIds] = useState<number[]>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Advisor
-  const [advisorType, setAdvisorType] = useState<'none' | 'external' | 'internal'>('none')
-  const [advisorName, setAdvisorName] = useState('')
+  const [advisorType, setAdvisorType] = useState<'none' | 'external' | 'internal'>(
+    project?.advisor_name ? 'external' : 'none'
+  )
+  const [advisorName, setAdvisorName] = useState(project?.advisor_name || '')
 
   function onThumbnailChange(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0]
@@ -64,10 +69,28 @@ export default function AddProjectModal({ token, onClose, onSuccess }: Props) {
     setSkillInput('')
   }
 
+  function isVideoFile(f: File): boolean {
+    return f.type.startsWith('video/') || /\.(mp4|mov|avi|mkv|webm|flv|3gp|wmv)$/i.test(f.name)
+  }
+
   function onMediaFilesChange(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? [])
     const oversized = files.filter(f => f.size > 50 * 1024 * 1024)
     if (oversized.length) { setError('Some files exceed 50 MB'); return }
+
+    const incomingVideos = files.filter(isVideoFile)
+    if (incomingVideos.length > 0) {
+      const extVid = existingMedia.find(m => m.file_type === 'video')
+      if (extVid) {
+        setDeletedMediaIds(prev => [...prev, extVid.media_id])
+        setExistingMedia(prev => prev.filter(item => item.media_id !== extVid.media_id))
+      }
+      const newVid = mediaFiles.find(isVideoFile)
+      if (newVid) {
+        setMediaFiles(prev => prev.filter(f => f !== newVid))
+      }
+    }
+
     setMediaFiles(prev => [...prev, ...files])
     setError('')
   }
@@ -75,8 +98,25 @@ export default function AddProjectModal({ token, onClose, onSuccess }: Props) {
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
     const files = Array.from(e.dataTransfer.files)
-    setMediaFiles(prev => [...prev, ...files.filter(f => f.size <= 50 * 1024 * 1024)])
-  }, [])
+    const oversized = files.filter(f => f.size > 50 * 1024 * 1024)
+    if (oversized.length) { setError('Some files exceed 50 MB'); return }
+
+    const incomingVideos = files.filter(isVideoFile)
+    if (incomingVideos.length > 0) {
+      const extVid = existingMedia.find(m => m.file_type === 'video')
+      if (extVid) {
+        setDeletedMediaIds(prev => [...prev, extVid.media_id])
+        setExistingMedia(prev => prev.filter(item => item.media_id !== extVid.media_id))
+      }
+      const newVid = mediaFiles.find(isVideoFile)
+      if (newVid) {
+        setMediaFiles(prev => prev.filter(f => f !== newVid))
+      }
+    }
+
+    setMediaFiles(prev => [...prev, ...files])
+    setError('')
+  }, [existingMedia, mediaFiles])
 
   async function handleSave() {
     if (!title.trim()) { setError('Project name is required'); return }
@@ -87,7 +127,7 @@ export default function AddProjectModal({ token, onClose, onSuccess }: Props) {
     setSaving(true)
     setError('')
     try {
-      const project = await createProject(token, {
+      const payload = {
         title: title.trim(),
         description: description || undefined,
         github_url: githubUrl || undefined,
@@ -101,9 +141,22 @@ export default function AddProjectModal({ token, onClose, onSuccess }: Props) {
         skill_names: skillNames,
         advisor_name: advisorType === 'external' && advisorName ? advisorName : null,
         advisor_user_id: null,
-      })
+      }
 
-      await Promise.all(mediaFiles.map(f => uploadProjectMedia(token, project.project_id, f)))
+      let savedProject
+      if (project) {
+        savedProject = await updateProject(token, project.project_id, payload)
+      } else {
+        savedProject = await createProject(token, payload)
+      }
+
+      if (project && deletedMediaIds.length > 0) {
+        await Promise.all(
+          deletedMediaIds.map(mediaId => deleteProjectMedia(token, project.project_id, mediaId).catch(() => {}))
+        )
+      }
+
+      await Promise.all(mediaFiles.map(f => uploadProjectMedia(token, savedProject.project_id, f)))
 
       onSuccess()
       onClose()
@@ -126,7 +179,7 @@ export default function AddProjectModal({ token, onClose, onSuccess }: Props) {
           </span>
           <div>
             <h2 className="font-display text-xl font-bold text-text-primary">
-              {step === 1 ? 'Add Project' : 'Skills & Media'}
+              {step === 1 ? (project ? 'Edit Project' : 'Add Project') : 'Skills & Video'}
             </h2>
             <p className="text-xs text-text-muted">Step {step} of 2</p>
           </div>
@@ -289,32 +342,111 @@ export default function AddProjectModal({ token, onClose, onSuccess }: Props) {
               )}
             </div>
 
-            {/* Media */}
+            {/* Video */}
             <div>
-              <label className="mb-1.5 block text-sm font-medium text-text-primary">Media</label>
-              <div
-                onDrop={onDrop}
-                onDragOver={e => e.preventDefault()}
-                onClick={() => fileInputRef.current?.click()}
-                className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-border p-6 transition hover:border-primary"
-              >
-                <Upload className="mb-2 h-6 w-6 text-text-muted" />
-                <p className="text-sm text-text-muted">Drag & drop or click to upload</p>
-                <p className="mt-1 text-xs text-text-muted">Any format · Max 50 MB per file</p>
-              </div>
-              <input ref={fileInputRef} type="file" multiple className="sr-only" onChange={onMediaFilesChange} />
-              {mediaFiles.length > 0 && (
+              <label className="mb-1.5 block text-sm font-medium text-text-primary">Project Video</label>
+
+              {(() => {
+                const extVid = existingMedia.find(m => m.file_type === 'video')
+                const newVid = mediaFiles.find(isVideoFile)
+                const videoUrl = extVid ? extVid.file_url : (newVid ? URL.createObjectURL(newVid) : null)
+                const hasVideo = !!extVid || !!newVid
+
+                if (!hasVideo) return null
+
+                return (
+                  <div className="relative rounded-xl border border-border bg-background p-4 flex items-center gap-4">
+                    {/* Thumbnail / Video Preview on the Left */}
+                    <div className="relative h-16 w-28 flex-shrink-0 overflow-hidden rounded-lg bg-black border border-border flex items-center justify-center">
+                      {thumbnailPreview ? (
+                        <img src={thumbnailPreview} alt="" className="h-full w-full object-cover" />
+                      ) : videoUrl ? (
+                        <video src={videoUrl} className="h-full w-full object-cover" preload="metadata" />
+                      ) : (
+                        <Upload className="h-5 w-5 text-text-muted" />
+                      )}
+                    </div>
+
+                    {/* Video Details in the Middle */}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-text-primary truncate">
+                        {extVid?.file_name || newVid?.name}
+                      </p>
+                      <p className="text-xs text-text-muted mt-0.5">
+                        {extVid ? 'Existing Video Attachment' : 'Selected for Upload'}
+                      </p>
+                    </div>
+
+                    {/* Delete Button on the Right */}
+                    <button
+                      onClick={() => {
+                        if (extVid) {
+                          setDeletedMediaIds(prev => [...prev, extVid.media_id])
+                          setExistingMedia(prev => prev.filter(item => item.media_id !== extVid.media_id))
+                        } else if (newVid) {
+                          setMediaFiles(prev => prev.filter(f => f !== newVid))
+                        }
+                      }}
+                      className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-red-50 text-text-muted hover:text-red-500 transition"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                )
+              })() || (
+                <>
+                  <div
+                    onDrop={onDrop}
+                    onDragOver={e => e.preventDefault()}
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed border-border p-6 transition hover:border-primary"
+                  >
+                    <Upload className="mb-2 h-6 w-6 text-text-muted" />
+                    <p className="text-sm text-text-muted">Drag & drop or click to upload video</p>
+                    <p className="mt-1 text-xs text-text-muted">MP4, WebM or similar · Max 50 MB (Limit 1)</p>
+                  </div>
+                  <input ref={fileInputRef} type="file" accept="video/*" className="sr-only" onChange={onMediaFilesChange} />
+                </>
+              )}
+
+              {/* Render other attachments if any exist */}
+              {mediaFiles.filter(f => !isVideoFile(f)).length > 0 && (
                 <ul className="mt-2 space-y-1">
-                  {mediaFiles.map((f, i) => (
+                  {mediaFiles.filter(f => !isVideoFile(f)).map((f, i) => (
                     <li key={i} className="flex items-center justify-between rounded-lg bg-background px-3 py-2 text-xs text-text-muted">
                       <span className="truncate">{f.name}</span>
                       <div className="ml-2 flex items-center gap-2 flex-shrink-0">
                         <span className="rounded-full bg-primary/10 px-2 py-0.5 text-primary">{(f.size / 1024 / 1024).toFixed(1)} MB</span>
-                        <button onClick={() => setMediaFiles(prev => prev.filter((_, j) => j !== i))} className="text-text-muted hover:text-red-500"><X className="h-3.5 w-3.5" /></button>
+                        <button onClick={() => setMediaFiles(prev => prev.filter(item => item !== f))} className="text-text-muted hover:text-red-500"><X className="h-3.5 w-3.5" /></button>
                       </div>
                     </li>
                   ))}
                 </ul>
+              )}
+
+              {existingMedia.filter(m => m.file_type !== 'video').length > 0 && (
+                <div className="mt-2">
+                  <span className="mb-1 block text-[10px] font-semibold text-text-muted uppercase tracking-wider">Other Existing Attachments</span>
+                  <ul className="space-y-1.5">
+                    {existingMedia.filter(m => m.file_type !== 'video').map((m) => (
+                      <li key={m.media_id} className="flex items-center justify-between rounded-lg bg-background px-3 py-2 text-xs text-text-muted border border-border/40">
+                        <span className="truncate font-medium">{m.file_name || 'Attachment'}</span>
+                        <div className="ml-2 flex items-center gap-2 flex-shrink-0">
+                          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-primary text-[10px] font-semibold uppercase">{m.file_type}</span>
+                          <button
+                            onClick={() => {
+                              setDeletedMediaIds(prev => [...prev, m.media_id])
+                              setExistingMedia(prev => prev.filter(item => item.media_id !== m.media_id))
+                            }}
+                            className="text-text-muted hover:text-red-500 transition"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
             </div>
           </div>

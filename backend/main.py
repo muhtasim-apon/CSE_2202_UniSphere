@@ -80,7 +80,6 @@ app.include_router(profile_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://cse-2202-project.vercel.app",
         "https://unisphere-beta.vercel.app",
     ],
     allow_origin_regex=r"(http://(localhost|127\.0\.0\.1):\d+|https://.*\.vercel\.app)",

@@ -64,7 +64,7 @@ export default function ProfilePhotoUpload({ userId, role, photoUrl, initials, o
     }
 
     const { data: publicUrlData } = supabase.storage.from('profile-photos').getPublicUrl(path)
-    const photoUrl = publicUrlData.publicUrl
+    const newPhotoUrl = publicUrlData.publicUrl
 
     // Update the row through the backend (service_role) so RLS on
     // the student / instructor table doesn't reject the write.
@@ -82,7 +82,7 @@ export default function ProfilePhotoUpload({ userId, role, photoUrl, initials, o
         'Content-Type': 'application/json',
         Authorization: `Bearer ${session.access_token}`,
       },
-      body: JSON.stringify({ photo_url: photoUrl, role }),
+      body: JSON.stringify({ photo_url: newPhotoUrl, role }),
     })
 
     setUploading(false)
@@ -94,7 +94,7 @@ export default function ProfilePhotoUpload({ userId, role, photoUrl, initials, o
     }
 
     setCacheBust((n) => n + 1)
-    onUploaded(photoUrl)
+    onUploaded(newPhotoUrl)
     router.refresh()
   }
 

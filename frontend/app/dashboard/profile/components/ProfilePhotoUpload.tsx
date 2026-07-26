@@ -40,6 +40,19 @@ export default function ProfilePhotoUpload({ userId, role, photoUrl, initials, o
     const ext = file.name.split('.').pop()
     const path = `${userId}/avatar_${Date.now()}.${ext}`
 
+    // Delete the old photo if it exists to clean up storage
+    if (photoUrl) {
+      try {
+        const parts = photoUrl.split('/profile-photos/')
+        if (parts.length > 1) {
+          const oldPath = decodeURIComponent(parts[1])
+          await supabase.storage.from('profile-photos').remove([oldPath])
+        }
+      } catch (err) {
+        console.error('Failed to remove old photo:', err)
+      }
+    }
+
     const { error: uploadError } = await supabase.storage
       .from('profile-photos')
       .upload(path, file, { upsert: true })

@@ -142,4 +142,23 @@ CREATE POLICY course_result_select_own ON public.course_result
 GRANT SELECT ON public.course_result TO authenticated;
 GRANT USAGE, SELECT ON SEQUENCE public.course_result_course_result_id_seq TO authenticated;
 
+-- ------------------------------------------------------------
+-- PART E: v_profile_email — batch email lookup for course rosters
+-- ------------------------------------------------------------
+-- Emails live only in auth.users, so the roster endpoint was issuing one
+-- auth.admin.get_user_by_id() call PER STUDENT. This view lets the backend
+-- (service_role) fetch them all in a single query.
+CREATE OR REPLACE VIEW public.v_profile_email AS
+    SELECT p.id, u.email
+      FROM public.profiles p
+      JOIN auth.users u ON u.id = p.id;
+
+ALTER VIEW public.v_profile_email SET (security_invoker = on);
+
+COMMENT ON VIEW public.v_profile_email IS
+    'profile_id -> email. security_invoker keeps auth.users RLS in force, so '
+    'only service_role can read it in practice.';
+
+REVOKE ALL ON public.v_profile_email FROM anon, authenticated;
+
 COMMIT;

@@ -20,6 +20,7 @@ logger = logging.getLogger("unisphere.achievements")
 router = APIRouter(prefix="/api/achievements", tags=["achievements"])
 
 MAX_FILE_BYTES = 52_428_800  # 50 MB
+NOTIFICATION_BATCH_SIZE = 500
 
 
 # ── AUTH ──────────────────────────────────────────────────────────────────────
@@ -213,10 +214,12 @@ def _broadcast_achievement(
             }
             for p in profiles_res.data
         ]
-        if rows:
-            _supabase.table("notification").insert(rows).execute()
+        # Chunked: a single insert of one row per user is a payload that grows
+        # without bound as the user base does.
+        for i in range(0, len(rows), NOTIFICATION_BATCH_SIZE):
+            _supabase.table("notification").insert(rows[i:i + NOTIFICATION_BATCH_SIZE]).execute()
     except Exception:
-        pass
+        logger.exception("Failed to broadcast %s %s", achievement_type, target_id)
 
 
 def _creator_name(user_id: str) -> str:
@@ -580,7 +583,7 @@ async def update_project(
 ):
     user = await _auth(authorization)
     db_user_id = _user_id(user)
-    existing = _supabase.table("project").select("user_id").eq("project_id", project_id).maybe_single().execute()
+    existing = _supabase.table("project").select("user_id, is_published, title").eq("project_id", project_id).maybe_single().execute()
     if not existing or not existing.data:
         raise HTTPException(status_code=404, detail="Project not found")
     if existing.data["user_id"] != db_user_id:
@@ -593,6 +596,18 @@ async def update_project(
     res = _supabase.table("project").update(update_data).eq("project_id", project_id).execute()
     if not res.data:
         raise HTTPException(status_code=404, detail="Not found or nothing changed")
+
+    # Publishing a draft is just as much "new" to everyone else as creating one
+    # already-published, but only creation used to broadcast.
+    if update_data.get("is_published") and not existing.data.get("is_published"):
+        _broadcast_achievement(
+            owner_id=db_user_id,
+            notif_type="new_project",
+            title=f"{_creator_name(db_user_id)} shared a new project",
+            body_text=res.data[0].get("title") or existing.data.get("title") or "",
+            achievement_type="project",
+            target_id=project_id,
+        )
     return res.data[0]
 
 

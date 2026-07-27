@@ -69,7 +69,7 @@ async def lifespan(app: FastAPI):
         ("notice-attachments", 52428800),
         ("achievement-media",  52428800),
         ("chat-attachments",   52428800),
-        ("class-resources",    2147483648),   # 2 GB
+        ("class-resources",    52428800),
     ]:
         try:
             supabase.storage.create_bucket(
@@ -346,6 +346,7 @@ class NoticeUpdateRequest(BaseModel):
 
 
 # The frontend `accept=` attribute is a hint, not a control — enforce here.
+NOTIFICATION_BATCH_SIZE = 500
 MAX_ATTACHMENT_BYTES = 52_428_800  # 50 MB, matches the bucket's file_size_limit
 ALLOWED_ATTACHMENT_MIMES = {
     "image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml",
@@ -460,10 +461,11 @@ def _notify_new_notice(author_id: str, post_title: str, audience: str) -> None:
             }
             for p in profiles_res.data
         ]
-        if rows:
-            supabase.table("notification").insert(rows).execute()
+        # Chunked — one row per user in a single insert grows without bound.
+        for i in range(0, len(rows), NOTIFICATION_BATCH_SIZE):
+            supabase.table("notification").insert(rows[i:i + NOTIFICATION_BATCH_SIZE]).execute()
     except Exception:
-        pass
+        logger.exception("Failed to fan out notice notification for %r", post_title)
 
 
 @app.get("/api/notices")

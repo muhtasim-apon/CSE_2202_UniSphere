@@ -129,6 +129,7 @@ function TeacherView({ token, courseId, creditHours = 3, onMarkSaved }: {
   const [showLegend, setShowLegend] = useState(false)
   const [expandedExam, setExpandedExam] = useState<number | null>(null)
   const [markInputs, setMarkInputs] = useState<Record<string, { val: string; saving: boolean; saved: boolean }>>({})
+  const [saveError, setSaveError] = useState('')
 
   const load = useCallback(() => {
     setLoading(true)
@@ -153,16 +154,30 @@ function TeacherView({ token, courseId, creditHours = 3, onMarkSaved }: {
 
   async function saveMark(examId: number, studentId: number) {
     const k = `${examId}-${studentId}`
+    const exam = exams.find(e => e.exam_id === examId)
     const v = parseFloat(markInputs[k]?.val || '')
     if (isNaN(v) || v < 0) return
+    // The input's `max` attribute is advisory; the server rejects this too.
+    if (exam && v > exam.total_marks) {
+      setSaveError(`Mark cannot exceed the exam total of ${exam.total_marks}`)
+      return
+    }
+    setSaveError('')
     setMarkInputs(prev => ({ ...prev, [k]: { ...prev[k], saving: true, saved: false } }))
     try {
-      await upsertMark(token, examId, studentId, v)
+      const updated = await upsertMark(token, examId, studentId, v)
       setMarkInputs(prev => ({ ...prev, [k]: { val: String(v), saving: false, saved: true } }))
+      // Patch just this cell instead of refetching the whole gradebook, which
+      // also collapsed whichever exam the teacher was working in.
+      setStudents(prev => prev.map(s =>
+        s.student_id === studentId
+          ? { ...s, marks: { ...s.marks, [examId]: { ...s.marks[examId], ...updated } } }
+          : s
+      ))
       onMarkSaved?.()
-      load()
-    } catch {
+    } catch (e: unknown) {
       setMarkInputs(prev => ({ ...prev, [k]: { ...prev[k], saving: false } }))
+      setSaveError(e instanceof Error ? e.message : 'Failed to save mark')
     }
   }
 
@@ -181,6 +196,12 @@ function TeacherView({ token, courseId, creditHours = 3, onMarkSaved }: {
           <Plus className="h-3.5 w-3.5" /> Add Exam
         </button>
       </div>
+
+      {saveError && (
+        <p className="rounded-xl bg-red-50 px-4 py-2 text-xs text-red-600 dark:bg-red-500/10 dark:text-red-300">
+          {saveError}
+        </p>
+      )}
 
       {showLegend && (
         <div className="rounded-xl border border-border bg-background p-3">

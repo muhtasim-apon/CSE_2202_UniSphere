@@ -382,13 +382,33 @@ async def join_manual_course(body: JoinCourseRequest, authorization: Optional[st
     if not course or not course.data:
         raise HTTPException(status_code=404, detail="No active course found with that code")
 
-    if _supabase.table("manual_enrollment").select("enrollment_id").eq("manual_course_id", course.data["manual_course_id"]).eq("student_id", student_id).maybe_single().execute().data:
-        raise HTTPException(status_code=409, detail="Already enrolled")
+    course_id = course.data["manual_course_id"]
+    existing = (
+        _supabase.table("manual_enrollment")
+        .select("enrollment_id, is_active")
+        .eq("manual_course_id", course_id)
+        .eq("student_id", student_id)
+        .maybe_single()
+        .execute()
+    )
+    if existing and existing.data:
+        if existing.data["is_active"]:
+            raise HTTPException(status_code=409, detail="Already enrolled")
+        # Reactivate rather than 409 — matches join_by_token, which previously
+        # was the only path that let a removed student rejoin.
+        enrollment = (
+            _supabase.table("manual_enrollment")
+            .update({"is_active": True})
+            .eq("manual_course_id", course_id)
+            .eq("student_id", student_id)
+            .execute()
+        )
+    else:
+        enrollment = _supabase.table("manual_enrollment").insert({
+            "manual_course_id": course_id,
+            "student_id": student_id,
+        }).execute()
 
-    enrollment = _supabase.table("manual_enrollment").insert({
-        "manual_course_id": course.data["manual_course_id"],
-        "student_id": student_id,
-    }).execute()
     return {"enrollment": enrollment.data[0], "course": course.data}
 
 
@@ -433,7 +453,11 @@ async def delete_manual_course(manual_course_id: int, authorization: Optional[st
     if not course.data or course.data["instructor_id"] != instructor_id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
+    # Soft-delete the course AND its enrolments — otherwise the course kept
+    # showing up for students, whose queries filter on enrolment.is_active
+    # rather than course.is_active.
     _supabase.table("manual_course").update({"is_active": False}).eq("manual_course_id", manual_course_id).execute()
+    _supabase.table("manual_enrollment").update({"is_active": False}).eq("manual_course_id", manual_course_id).execute()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1382,16 +1406,27 @@ async def list_course_students_with_email(
         .execute()
     )
 
+    rows = enrollments.data or []
+
+    # One read for the whole roster via v_profile_email, instead of an
+    # auth.admin.get_user_by_id() round trip per student.
+    profile_ids = [s["profile_id"] for e in rows if (s := e.get("student") or {}).get("profile_id")]
+    emails: dict = {}
+    if profile_ids:
+        try:
+            found = (
+                _supabase.table("v_profile_email").select("id, email").in_("id", profile_ids).execute()
+            ).data or []
+            emails = {p["id"]: p.get("email") or "" for p in found}
+        except Exception:
+            # The view ships in Database/cgpa_curriculum_2026.sql; if it hasn't
+            # been applied yet the roster is still useful without emails.
+            logger.exception("Could not batch-load emails for course %s", course_id)
+
     students = []
-    for e in (enrollments.data or []):
+    for e in rows:
         s = e.get("student") or {}
-        pid = s.get("profile_id")
-        email = ""
-        if pid:
-            p = _supabase.table("profiles").select("id").eq("id", pid).maybe_single().execute()
-            if p and p.data:
-                auth_user = _supabase.auth.admin.get_user_by_id(pid)
-                email = (auth_user.user.email or "") if auth_user and auth_user.user else ""
+        email = emails.get(s.get("profile_id"), "")
         students.append({
             "enrollment_id": e["enrollment_id"],
             "enrolled_at": e["enrolled_at"],
@@ -1707,7 +1742,10 @@ async def dismiss_invite(invite_id: int, authorization: Optional[str] = Header(d
 
 # ── E. RESOURCE ENDPOINTS ─────────────────────────────────────────────────────
 
-MAX_RESOURCE_BYTES = 2_147_483_648  # 2 GB
+# Must match the bucket's file_size_limit in main.py's lifespan hook — the two
+# used to disagree (2 GB here, 50 MB in the bucket created on the upload path).
+# The whole body is read into memory, so this is also a memory ceiling.
+MAX_RESOURCE_BYTES = 52_428_800  # 50 MB
 
 
 @router.post("/manual/{course_id}/resources/upload", status_code=201)
@@ -1731,13 +1769,15 @@ async def upload_resource(
 
     if file and file.filename:
         # Check Content-Length before reading
+        limit_mb = MAX_RESOURCE_BYTES // 1_048_576
         cl = request.headers.get("content-length")
-        if cl and int(cl) > MAX_RESOURCE_BYTES:
-            raise HTTPException(status_code=413, detail="File exceeds 2 GB limit")
+        if cl and cl.isdigit() and int(cl) > MAX_RESOURCE_BYTES:
+            raise HTTPException(status_code=413, detail=f"File exceeds the {limit_mb} MB limit")
 
+        # Content-Length is client-supplied, so the real check is on the bytes.
         content = await file.read()
         if len(content) > MAX_RESOURCE_BYTES:
-            raise HTTPException(status_code=413, detail="File exceeds 2 GB limit")
+            raise HTTPException(status_code=413, detail=f"File exceeds the {limit_mb} MB limit")
 
         ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
         mime = file.content_type or "application/octet-stream"
@@ -1747,15 +1787,8 @@ async def upload_resource(
         safe_name = file.filename.replace(" ", "_").replace("(", "").replace(")", "")
         storage_path = f"{course_id}/{_uuid.uuid4()}/{safe_name}"
 
-        # Ensure bucket exists (lifespan creation may have silently failed)
-        try:
-            _supabase.storage.create_bucket(
-                "class-resources",
-                options={"public": True, "file_size_limit": 52428800},
-            )
-        except Exception:
-            pass  # already exists — that's fine
-
+        # The bucket is created once in main.py's lifespan hook; doing it here
+        # cost a round trip on every single upload.
         _supabase.storage.from_("class-resources").upload(
             storage_path, content, {"content-type": mime}
         )
@@ -1798,32 +1831,23 @@ async def get_course_resources(course_id: int, authorization: Optional[str] = He
     profile = _get_profile(user.id)
 
     # Verify access: teacher owns course OR student is enrolled
+    is_owner = False
     if profile.get("role") == "teacher":
-        instructor_id = _require_teacher(profile)
-        _assert_course_owner(course_id, instructor_id)
+        _owned_course_or_403(course_id, _require_teacher(profile))
+        is_owner = True
     else:
-        student_id = _require_student(profile)
-        enrolled = (
-            _supabase.table("manual_enrollment")
-            .select("enrollment_id")
-            .eq("manual_course_id", course_id)
-            .eq("student_id", student_id)
-            .eq("is_active", True)
-            .maybe_single()
-            .execute()
-        )
-        if not enrolled or not enrolled.data:
-            raise HTTPException(status_code=403, detail="Not enrolled in this course")
+        _assert_enrolled(course_id, _require_student(profile))
 
-    res = (
+    query = (
         _supabase.table("course_resource")
         .select("*")
         .eq("manual_course_id", course_id)
-        .eq("is_published", True)
-        .order("sort_order", desc=False)
-        .order("uploaded_at", desc=True)
-        .execute()
     )
+    # The owning teacher needs to see their drafts in order to publish them.
+    if not is_owner:
+        query = query.eq("is_published", True)
+
+    res = query.order("sort_order", desc=False).order("uploaded_at", desc=True).execute()
     return {"resources": res.data or []}
 
 
@@ -1843,16 +1867,21 @@ async def delete_resource(
         .select("storage_path")
         .eq("resource_id", resource_id)
         .eq("manual_course_id", course_id)
-        .single()
+        .maybe_single()
         .execute()
     )
-    if resource.data and resource.data.get("storage_path"):
+    if not resource or not resource.data:
+        raise HTTPException(status_code=404, detail="Resource not found")
+
+    if resource.data.get("storage_path"):
         try:
             _supabase.storage.from_("class-resources").remove([resource.data["storage_path"]])
         except Exception:
-            pass
+            logger.exception("Failed to remove class resource %s from storage", resource_id)
 
-    _supabase.table("course_resource").delete().eq("resource_id", resource_id).execute()
+    _supabase.table("course_resource").delete().eq("resource_id", resource_id).eq(
+        "manual_course_id", course_id
+    ).execute()
 
 
 @router.patch("/manual/{course_id}/resources/{resource_id}")
@@ -1867,6 +1896,12 @@ async def update_resource(
     instructor_id = _require_teacher(profile)
     _assert_course_owner(course_id, instructor_id)
 
-    update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+    # exclude_unset so is_published=False and empty descriptions actually apply
+    update_data = body.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
     res = _supabase.table("course_resource").update(update_data).eq("resource_id", resource_id).eq("manual_course_id", course_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Resource not found")
     return res.data[0]

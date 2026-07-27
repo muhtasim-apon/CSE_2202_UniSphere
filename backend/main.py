@@ -1,5 +1,7 @@
+import logging
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from typing import Literal, Optional
 
@@ -30,6 +32,15 @@ from routers.classes import router as classes_router, profile_router  # noqa: E4
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_ROLE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
 SUPABASE_JWT_SECRET = os.environ.get("SUPABASE_JWT_SECRET", "")
+
+SYMMETRIC_ALGS = ["HS256", "HS384", "HS512"]
+ASYMMETRIC_ALGS = ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"]
+
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("unisphere")
 
 @dataclass
 class SimpleUser:
@@ -77,12 +88,15 @@ app.include_router(chat_router)
 app.include_router(classes_router)
 app.include_router(profile_router)
 
+# `https://.*\.vercel\.app` would let ANY Vercel-hosted site call this API with
+# the user's token. Pin to this project's own deployments (production plus its
+# preview builds, which are prefixed `unisphere-`), and localhost for dev.
+_EXTRA_ORIGINS = [o.strip() for o in os.environ.get("CORS_EXTRA_ORIGINS", "").split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://unisphere-beta.vercel.app",
-    ],
-    allow_origin_regex=r"(http://(localhost|127\.0\.0\.1):\d+|https://.*\.vercel\.app)",
+    allow_origins=["https://unisphere-beta.vercel.app", *_EXTRA_ORIGINS],
+    allow_origin_regex=r"(http://(localhost|127\.0\.0\.1):\d+|https://unisphere[a-z0-9-]*\.vercel\.app)",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -331,6 +345,23 @@ class NoticeUpdateRequest(BaseModel):
     audience: Optional[Literal["all", "students", "teachers"]] = None
 
 
+# The frontend `accept=` attribute is a hint, not a control — enforce here.
+MAX_ATTACHMENT_BYTES = 52_428_800  # 50 MB, matches the bucket's file_size_limit
+ALLOWED_ATTACHMENT_MIMES = {
+    "image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml",
+    "application/pdf",
+    "text/plain", "text/markdown", "text/csv",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "video/mp4", "video/webm",
+    "audio/mpeg", "audio/mp4", "audio/ogg", "audio/webm", "audio/wav",
+}
+
+
 class ReactionRequest(BaseModel):
     reaction: Literal["like", "love", "haha", "wow", "sad", "angry", "fire", "clap", "think", "party"]
 
@@ -354,24 +385,30 @@ async def get_current_user(authorization: Optional[str] = Header(default=None)) 
         header = pyjwt.get_unverified_header(token)
         alg: str = header.get("alg", "HS256")
 
-        if alg.startswith("HS"):
-            # Symmetric — verify with the JWT secret from .env
+        # `alg` is attacker-controlled, so it may only select within a key
+        # family, never across one — otherwise an RS256 token can be forged as
+        # HS256 signed with the public key (algorithm confusion).
+        if alg in SYMMETRIC_ALGS:
+            if not SUPABASE_JWT_SECRET.strip():
+                raise HTTPException(status_code=401, detail="Server not configured for symmetric tokens")
             payload = pyjwt.decode(
                 token,
                 SUPABASE_JWT_SECRET.strip(),
-                algorithms=[alg],
+                algorithms=SYMMETRIC_ALGS,
                 options={"verify_aud": False},
             )
-        else:
+        elif alg in ASYMMETRIC_ALGS:
             # Asymmetric (RS256, ES256 …) — verify with Supabase public JWKS key.
             # Keys are fetched once and cached in _jwks_client.
             signing_key = _get_jwks_client().get_signing_key_from_jwt(token)
             payload = pyjwt.decode(
                 token,
                 signing_key.key,
-                algorithms=[alg],
+                algorithms=ASYMMETRIC_ALGS,
                 options={"verify_aud": False},
             )
+        else:
+            raise HTTPException(status_code=401, detail="Unsupported token algorithm")
 
         user_id: str = payload.get("sub", "")
         if not user_id:
@@ -385,6 +422,19 @@ async def get_current_user(authorization: Optional[str] = Header(default=None)) 
         raise HTTPException(status_code=401, detail=f"Invalid token: {exc}")
     except Exception as exc:
         raise HTTPException(status_code=401, detail=f"Auth error: {exc}")
+
+
+def _assert_may_target_audience(user_id: str, audience: Optional[str]) -> None:
+    """Only teachers may address the teachers-only audience.
+
+    This must be enforced on create *and* update — otherwise a student posts to
+    'all' and then PATCHes the audience to 'teachers', bypassing the gate.
+    """
+    if audience != "teachers":
+        return
+    profile = supabase.table("profiles").select("role").eq("id", user_id).single().execute()
+    if not profile.data or profile.data.get("role") != "teacher":
+        raise HTTPException(status_code=403, detail="Only teachers can post teacher-only notices")
 
 
 def _notify_new_notice(author_id: str, post_title: str, audience: str) -> None:
@@ -446,10 +496,7 @@ async def create_notice(
     authorization: Optional[str] = Header(default=None),
 ):
     user = await get_current_user(authorization)
-    if body.audience == "teachers":
-        profile = supabase.table("profiles").select("role").eq("id", user.id).single().execute()
-        if not profile.data or profile.data.get("role") != "teacher":
-            raise HTTPException(status_code=403, detail="Only teachers can post teacher-only notices")
+    _assert_may_target_audience(user.id, body.audience)
     res = supabase.table("notice_board_post").insert({
         "author_id": user.id,
         "title": body.title,
@@ -470,11 +517,21 @@ async def update_notice(
     authorization: Optional[str] = Header(default=None),
 ):
     user = await get_current_user(authorization)
-    existing = supabase.table("notice_board_post").select("author_id").eq("id", notice_id).single().execute()
-    if not existing.data or existing.data["author_id"] != user.id:
+    existing = supabase.table("notice_board_post").select("author_id").eq("id", notice_id).maybe_single().execute()
+    if not existing or not existing.data:
+        raise HTTPException(status_code=404, detail="Notice not found")
+    if existing.data["author_id"] != user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
-    update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+
+    # exclude_unset (not `is not None`) so a field can actually be cleared
+    update_data = body.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+    _assert_may_target_audience(user.id, update_data.get("audience"))
+
     res = supabase.table("notice_board_post").update(update_data).eq("id", notice_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Notice not found")
     return res.data[0]
 
 
@@ -593,9 +650,53 @@ async def cast_vote(
     authorization: Optional[str] = Header(default=None),
 ):
     user = await get_current_user(authorization)
-    poll = supabase.table("notice_board_poll").select("id").eq("post_id", notice_id).single().execute()
-    if not poll.data:
+    poll = (
+        supabase.table("notice_board_poll")
+        .select("id, is_multiple, ends_at")
+        .eq("post_id", notice_id)
+        .maybe_single()
+        .execute()
+    )
+    if not poll or not poll.data:
         raise HTTPException(status_code=404, detail="No poll")
+
+    ends_at = poll.data.get("ends_at")
+    if ends_at:
+        deadline = datetime.fromisoformat(str(ends_at).replace("Z", "+00:00"))
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=timezone.utc)
+        if deadline < datetime.now(timezone.utc):
+            raise HTTPException(status_code=409, detail="This poll has closed")
+
+    # The option must belong to THIS poll — UNIQUE(option_id, user_id) does not
+    # stop a vote cast with an option id borrowed from a different poll.
+    option = (
+        supabase.table("notice_board_poll_option")
+        .select("id")
+        .eq("id", body.option_id)
+        .eq("poll_id", poll.data["id"])
+        .maybe_single()
+        .execute()
+    )
+    if not option or not option.data:
+        raise HTTPException(status_code=400, detail="Option does not belong to this poll")
+
+    already = (
+        supabase.table("notice_board_poll_vote")
+        .select("id, option_id")
+        .eq("poll_id", poll.data["id"])
+        .eq("user_id", user.id)
+        .execute()
+    ).data or []
+    if any(v["option_id"] == body.option_id for v in already):
+        raise HTTPException(status_code=409, detail="You already voted for this option")
+    if already and not poll.data.get("is_multiple"):
+        # Single-choice: replace the previous vote rather than 500ing on the
+        # single-choice DB trigger.
+        supabase.table("notice_board_poll_vote").delete().eq(
+            "poll_id", poll.data["id"]
+        ).eq("user_id", user.id).execute()
+
     res = supabase.table("notice_board_poll_vote").insert({
         "poll_id": poll.data["id"],
         "option_id": body.option_id,
@@ -627,9 +728,20 @@ async def upload_attachment(
     if not existing.data or existing.data["author_id"] != user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
+    mime_in = (file.content_type or "application/octet-stream").split(";")[0].strip().lower()
+    if mime_in not in ALLOWED_ATTACHMENT_MIMES:
+        raise HTTPException(status_code=415, detail=f"Unsupported file type: {mime_in}")
+
     ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename and "." in file.filename else "bin"
     storage_path = f"{notice_id}/{_uuid.uuid4()}.{ext}"
+
     content = await file.read()
+    if len(content) > MAX_ATTACHMENT_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds the {MAX_ATTACHMENT_BYTES // 1048576} MB limit",
+        )
+
     supabase.storage.from_("notice-attachments").upload(
         storage_path, content, {"content-type": file.content_type}
     )

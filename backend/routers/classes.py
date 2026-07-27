@@ -1,5 +1,6 @@
 import os
-import random
+import re
+import secrets
 import string
 import uuid as _uuid
 from datetime import datetime, timezone
@@ -21,8 +22,15 @@ _supabase = create_client(
     os.environ["SUPABASE_SERVICE_ROLE_KEY"],
 )
 
-_jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "")
+_jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "").strip()
 _jwks_inst: Optional[_PyJWKClient] = None
+
+# The `alg` header is attacker-controlled, so it may only ever select *within* a
+# key family — never across one. Verifying an RS256 token with the HS256 secret
+# path (or vice versa) is the classic algorithm-confusion bypass.
+_SYMMETRIC_ALGS = ["HS256", "HS384", "HS512"]
+_ASYMMETRIC_ALGS = ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"]
+
 
 def _get_jwks_inst() -> _PyJWKClient:
     global _jwks_inst
@@ -41,12 +49,16 @@ async def _auth(authorization: Optional[str]) -> object:
     token = authorization.split(" ", 1)[1].strip()
     try:
         header = pyjwt.get_unverified_header(token)
-        alg = header.get("alg", "HS256")
-        if alg.startswith("HS"):
-            payload = pyjwt.decode(token, _jwt_secret, algorithms=[alg], options={"verify_aud": False})
-        else:
+        alg = header.get("alg", "")
+        if alg in _SYMMETRIC_ALGS:
+            if not _jwt_secret:
+                raise HTTPException(status_code=401, detail="Server not configured for symmetric tokens")
+            payload = pyjwt.decode(token, _jwt_secret, algorithms=_SYMMETRIC_ALGS, options={"verify_aud": False})
+        elif alg in _ASYMMETRIC_ALGS:
             sk = _get_jwks_inst().get_signing_key_from_jwt(token)
-            payload = pyjwt.decode(token, sk.key, algorithms=[alg], options={"verify_aud": False})
+            payload = pyjwt.decode(token, sk.key, algorithms=_ASYMMETRIC_ALGS, options={"verify_aud": False})
+        else:
+            raise HTTPException(status_code=401, detail="Unsupported token algorithm")
         uid = payload.get("sub", "")
         if not uid:
             raise HTTPException(status_code=401, detail="Invalid token")
@@ -81,6 +93,58 @@ def _require_teacher(profile: dict) -> int:
     if not iid:
         raise HTTPException(status_code=400, detail="Instructor profile not set up")
     return iid
+
+
+def _owned_course_or_403(manual_course_id: int, instructor_id: int) -> dict:
+    """Return the course row only if `instructor_id` owns it, else 403/404.
+
+    Every teacher-mutating endpoint must go through this — `_require_teacher`
+    alone only proves the caller is *a* teacher, not that the course is theirs.
+    """
+    course = (
+        _supabase.table("manual_course")
+        .select("*")
+        .eq("manual_course_id", manual_course_id)
+        .maybe_single()
+        .execute()
+    )
+    if not course or not course.data:
+        raise HTTPException(status_code=404, detail="Course not found")
+    if course.data["instructor_id"] != instructor_id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    return course.data
+
+
+def _owned_exam_or_403(exam_id: int, instructor_id: int) -> dict:
+    """Return the exam row only if it belongs to a course `instructor_id` owns."""
+    exam = (
+        _supabase.table("exam")
+        .select("*")
+        .eq("exam_id", exam_id)
+        .maybe_single()
+        .execute()
+    )
+    if not exam or not exam.data:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    course_id = exam.data.get("manual_course_id")
+    if not course_id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    _owned_course_or_403(course_id, instructor_id)
+    return exam.data
+
+
+def _assert_enrolled(manual_course_id: int, student_id: int) -> None:
+    enrolled = (
+        _supabase.table("manual_enrollment")
+        .select("enrollment_id")
+        .eq("manual_course_id", manual_course_id)
+        .eq("student_id", student_id)
+        .eq("is_active", True)
+        .maybe_single()
+        .execute()
+    )
+    if not enrolled or not enrolled.data:
+        raise HTTPException(status_code=403, detail="Not enrolled in this course")
 
 
 def _require_student(profile: dict) -> int:
@@ -202,7 +266,10 @@ class AdvisorUpdateRequest(BaseModel):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _gen_code() -> str:
-    return "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    # secrets, not random — an enrol code grants course access, so it must not
+    # be predictable from other issued codes.
+    alphabet = string.ascii_uppercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(6))
 
 
 @router.post("/manual/create", status_code=201)
@@ -312,6 +379,7 @@ async def create_attendance_session(body: AttendanceSessionCreate, authorization
     user = await _auth(authorization)
     profile = _get_profile(user.id)
     instructor_id = _require_teacher(profile)
+    _owned_course_or_403(body.manual_course_id, instructor_id)
 
     session_res = _supabase.table("attendance_session").insert({
         "manual_course_id": body.manual_course_id,
@@ -341,9 +409,18 @@ async def update_attendance_record(session_id: int, student_id: int, body: Atten
     profile = _get_profile(user.id)
     instructor_id = _require_teacher(profile)
 
-    session = _supabase.table("attendance_session").select("instructor_id").eq("session_id", session_id).single().execute()
-    if not session.data or session.data["instructor_id"] != instructor_id:
+    session = (
+        _supabase.table("attendance_session")
+        .select("instructor_id, manual_course_id")
+        .eq("session_id", session_id)
+        .maybe_single()
+        .execute()
+    )
+    if not session or not session.data:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.data["instructor_id"] != instructor_id:
         raise HTTPException(status_code=403, detail="Not authorized")
+    _assert_enrolled(session.data["manual_course_id"], student_id)
 
     res = _supabase.table("attendance_record").upsert({
         "session_id": session_id,
@@ -357,12 +434,32 @@ async def update_attendance_record(session_id: int, student_id: int, body: Atten
 
 @router.get("/attendance/session/{session_id}")
 async def get_attendance_session(session_id: int, authorization: Optional[str] = Header(default=None)):
-    await _auth(authorization)
-    session = _supabase.table("attendance_session").select("*").eq("session_id", session_id).single().execute()
-    if not session.data:
+    user = await _auth(authorization)
+    profile = _get_profile(user.id)
+    session = (
+        _supabase.table("attendance_session")
+        .select("*")
+        .eq("session_id", session_id)
+        .maybe_single()
+        .execute()
+    )
+    if not session or not session.data:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    records = _supabase.table("attendance_record").select("*, student:student(first_name, last_name, student_roll)").eq("session_id", session_id).execute().data or []
+    # The owning teacher sees the full roster; an enrolled student sees only
+    # their own row — never their classmates' attendance.
+    query = _supabase.table("attendance_record").select(
+        "*, student:student(first_name, last_name, student_roll)"
+    ).eq("session_id", session_id)
+
+    if profile.get("role") == "teacher":
+        _owned_course_or_403(session.data["manual_course_id"], _require_teacher(profile))
+    else:
+        student_id = _require_student(profile)
+        _assert_enrolled(session.data["manual_course_id"], student_id)
+        query = query.eq("student_id", student_id)
+
+    records = query.execute().data or []
     total = len(records)
     return {
         "session": session.data,
@@ -619,7 +716,10 @@ async def my_all_marks(authorization: Optional[str] = Header(default=None)):
 async def create_exam(body: ExamCreate, authorization: Optional[str] = Header(default=None)):
     user = await _auth(authorization)
     profile = _get_profile(user.id)
-    _require_teacher(profile)   # teachers only
+    instructor_id = _require_teacher(profile)
+    if body.manual_course_id is None:
+        raise HTTPException(status_code=400, detail="manual_course_id is required")
+    _owned_course_or_403(body.manual_course_id, instructor_id)
     res = _supabase.table("exam").insert({
         "manual_course_id": body.manual_course_id,
         "exam_name":    body.exam_name,
@@ -651,10 +751,32 @@ async def list_exams(
         return {"exams": res.data or []}
 
     student_id = _require_student(profile)
-    query = _supabase.table("exam").select("*").eq("is_published", True)
+
+    # Scope to the student's own enrolments — `is_published` alone would expose
+    # every exam in the system.
     if course_id is not None:
-        query = query.eq("manual_course_id", course_id)
-    exams = query.order("created_at", desc=True).execute().data or []
+        _assert_enrolled(course_id, student_id)
+        enrolled_ids = [course_id]
+    else:
+        enrolments = (
+            _supabase.table("manual_enrollment")
+            .select("manual_course_id")
+            .eq("student_id", student_id)
+            .eq("is_active", True)
+            .execute()
+        )
+        enrolled_ids = [e["manual_course_id"] for e in (enrolments.data or [])]
+        if not enrolled_ids:
+            return {"exams": []}
+
+    exams = (
+        _supabase.table("exam")
+        .select("*")
+        .eq("is_published", True)
+        .in_("manual_course_id", enrolled_ids)
+        .order("created_at", desc=True)
+        .execute()
+    ).data or []
     if exams:
         ids = [e["exam_id"] for e in exams]
         marks = _supabase.table("exam_mark").select("*").eq("student_id", student_id).in_("exam_id", ids).execute().data or []
@@ -668,13 +790,23 @@ async def list_exams(
 async def upsert_mark(exam_id: int, student_id: int, body: SingleMarkRequest, authorization: Optional[str] = Header(default=None)):
     user = await _auth(authorization)
     profile = _get_profile(user.id)
-    _require_teacher(profile)   # teachers only — students cannot enter marks
+    instructor_id = _require_teacher(profile)   # students cannot enter marks
 
-    exam = _supabase.table("exam").select("total_marks").eq("exam_id", exam_id).single().execute()
-    if not exam.data:
-        raise HTTPException(status_code=404, detail="Exam not found")
+    # Must own the course the exam belongs to, and the student must be enrolled
+    # in it — otherwise any teacher could rewrite any student's transcript.
+    exam_row = _owned_exam_or_403(exam_id, instructor_id)
+    _assert_enrolled(exam_row["manual_course_id"], student_id)
 
-    grade, gp = _compute_grade(body.marks_obtained, float(exam.data["total_marks"]))
+    total_marks = float(exam_row["total_marks"])
+    if total_marks <= 0:
+        raise HTTPException(status_code=400, detail="Exam has no positive total marks")
+    if body.marks_obtained > total_marks:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Marks obtained ({body.marks_obtained}) exceeds exam total ({total_marks})",
+        )
+
+    grade, gp = _compute_grade(body.marks_obtained, total_marks)
     res = _supabase.table("exam_mark").upsert({
         "exam_id":        exam_id,
         "student_id":     student_id,
@@ -694,7 +826,7 @@ async def upsert_mark(exam_id: int, student_id: int, body: SingleMarkRequest, au
                 "sender_id":    user.id,
                 "notif_type":   "general",
                 "title":        "Exam mark entered",
-                "body":         f"Your mark: {grade} ({body.marks_obtained}/{exam.data['total_marks']})",
+                "body":         f"Your mark: {grade} ({body.marks_obtained}/{total_marks})",
                 "is_read":      False,
             }).execute()
     except Exception:
@@ -727,6 +859,7 @@ async def get_exam_marks(exam_id: int, authorization: Optional[str] = Header(def
     profile = _get_profile(user.id)
 
     if profile.get("role") == "teacher":
+        _owned_exam_or_403(exam_id, _require_teacher(profile))
         res = _supabase.table("exam_mark").select("*, student:student(first_name, last_name, student_roll)").eq("exam_id", exam_id).execute()
         return {"marks": res.data or []}
 
@@ -921,17 +1054,29 @@ def _assert_course_owner(manual_course_id: int, instructor_id: int) -> dict:
 
 @router.get("/manual/{course_id}")
 async def get_course_detail(course_id: int, authorization: Optional[str] = Header(default=None)):
-    await _auth(authorization)
+    user = await _auth(authorization)
+    profile = _get_profile(user.id)
     course = (
         _supabase.table("manual_course")
         .select("*, instructor:instructor(first_name, last_name, employee_id, designation)")
         .eq("manual_course_id", course_id)
         .eq("is_active", True)
-        .single()
+        .maybe_single()
         .execute()
     )
-    if not course.data:
+    if not course or not course.data:
         raise HTTPException(status_code=404, detail="Course not found")
+
+    # Only the owning teacher may see the course; anyone else enumerating ids
+    # would otherwise harvest join_link_token and self-enrol into any course.
+    is_owner = (
+        profile.get("role") == "teacher"
+        and profile.get("instructor_id") == course.data["instructor_id"]
+    )
+    if not is_owner:
+        if profile.get("role") == "teacher":
+            raise HTTPException(status_code=403, detail="Not authorized")
+        _assert_enrolled(course_id, _require_student(profile))
 
     enrollment_count = (
         _supabase.table("manual_enrollment")
@@ -949,13 +1094,18 @@ async def get_course_detail(course_id: int, authorization: Optional[str] = Heade
         .execute()
     ).count or 0
 
-    token = course.data.get("join_link_token", "")
-    return {
-        "course": course.data,
+    # The share link is a credential — it is only ever returned to the owner.
+    data = dict(course.data)
+    token = data.pop("join_link_token", "")
+    payload = {
+        "course": data,
         "enrollment_count": enrollment_count,
         "resource_count": resource_count,
-        "join_link": f"{FRONTEND_URL}/dashboard/classes?join={token}",
     }
+    if is_owner:
+        payload["course"]["join_link_token"] = token
+        payload["join_link"] = f"{FRONTEND_URL}/dashboard/classes?join={token}"
+    return payload
 
 
 # ── B. STUDENT MANAGEMENT ─────────────────────────────────────────────────────
@@ -1019,9 +1169,14 @@ async def list_all_students(
         .eq("is_active", True)
     )
     if q:
-        query = query.or_(
-            f"first_name.ilike.%{q}%,last_name.ilike.%{q}%,student_roll.ilike.%{q}%"
-        )
+        # PostgREST parses `or_` as a comma/parenthesis-delimited expression, so
+        # raw user input here is filter injection. Strip the delimiters and the
+        # LIKE wildcards rather than interpolating blind.
+        safe_q = re.sub(r'[,()*%_\\."\']', "", q).strip()[:60]
+        if safe_q:
+            query = query.or_(
+                f"first_name.ilike.%{safe_q}%,last_name.ilike.%{safe_q}%,student_roll.ilike.%{safe_q}%"
+            )
 
     res = query.range(offset, offset + limit - 1).execute()
     students = res.data or []

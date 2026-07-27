@@ -32,7 +32,6 @@ export default function NoticeBoard() {
   const [error, setError] = useState('')
   const [modalOpen, setModalOpen] = useState(false)
   const [editingNotice, setEditingNotice] = useState<NoticePost | null>(null)
-  const [refreshKey, setRefreshKey] = useState(0)
 
   // Bootstrap: get session + role
   useEffect(() => {
@@ -50,6 +49,8 @@ export default function NoticeBoard() {
     })
   }, [])
 
+  const PAGE_SIZE = 20
+
   const fetchNotices = useCallback(async (cat: string, pg: number, append = false) => {
     if (!token) return
     if (pg === 1) setLoading(true)
@@ -58,8 +59,13 @@ export default function NoticeBoard() {
     try {
       const data = await getNotices(token, cat || undefined, pg)
       const fetched = data.notices ?? []
-      setNotices(prev => (append ? [...prev, ...fetched] : fetched))
-      setHasMore(fetched.length === 20)
+      setNotices(prev => {
+        if (!append) return fetched
+        // De-dupe: a realtime insert can shift rows between pages.
+        const seen = new Set(prev.map(n => n.id))
+        return [...prev, ...fetched.filter(n => !seen.has(n.id))]
+      })
+      setHasMore(fetched.length === PAGE_SIZE)
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Failed to load notices.')
     } finally {
@@ -68,12 +74,25 @@ export default function NoticeBoard() {
     }
   }, [token])
 
+  // Prepend a newly-posted notice instead of resetting to page 1, which used to
+  // discard every page the reader had already loaded.
+  const prependNotice = useCallback(async (id: string) => {
+    if (!token) return
+    try {
+      const data = await getNotices(token, activeCategory || undefined, 1)
+      const match = (data.notices ?? []).find(n => n.id === id)
+      if (match) setNotices(prev => (prev.some(n => n.id === id) ? prev : [match, ...prev]))
+    } catch {
+      // Non-fatal: the notice simply appears on the next manual refresh.
+    }
+  }, [token, activeCategory])
+
   useEffect(() => {
     if (token) {
       setPage(1)
       fetchNotices(activeCategory, 1)
     }
-  }, [token, activeCategory, fetchNotices, refreshKey])
+  }, [token, activeCategory, fetchNotices])
 
   // Real-time: notify + refresh when another user posts
   useEffect(() => {
@@ -85,22 +104,22 @@ export default function NoticeBoard() {
         'postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'notice_board_post' },
         (payload) => {
-          const post = payload.new as { author_id: string; title: string; audience: string }
+          const post = payload.new as { id: string; author_id: string; title: string; audience: string }
           if (post.author_id === userId) return
           // Respect audience rules: teachers skip student-only posts, students skip teacher-only posts
           if (post.audience === 'students' && userRole === 'teacher') return
           if (post.audience === 'teachers' && userRole !== 'teacher') return
-          setRefreshKey(k => k + 1)
+          prependNotice(post.id)
         }
       )
       .subscribe()
     return () => { supabase.removeChannel(channel) }
-  }, [token, userId, userRole])
+  }, [token, userId, userRole, prependNotice])
 
   function handleCategoryChange(cat: string) {
+    if (cat === activeCategory) return
     setActiveCategory(cat)
     setPage(1)
-    setNotices([])
   }
 
   function handleLoadMore() {

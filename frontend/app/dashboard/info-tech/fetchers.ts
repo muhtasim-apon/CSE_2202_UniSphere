@@ -1,6 +1,24 @@
 import type { Article } from './types'
 import { parseRssXml } from '@/app/lib/rssParser'
 
+/** Every upstream here is a third party. Without a deadline one slow host
+ *  blocks the whole page render and pins a server worker indefinitely. */
+const FETCH_TIMEOUT_MS = 6000
+
+async function fetchWithTimeout(
+  input: string,
+  init: RequestInit = {},
+  timeoutMs = FETCH_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    return await fetch(input, { ...init, signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 function extractAtomTag(xml: string, tag: string): string {
   const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const m = xml.match(
@@ -13,7 +31,7 @@ function extractAtomTag(xml: string, tag: string): string {
 
 export async function fetchArxiv(): Promise<Article[]> {
   try {
-    const res = await fetch(
+    const res = await fetchWithTimeout(
       'https://export.arxiv.org/api/query?search_query=cat:cs.CV+OR+cat:cs.LG+OR+cat:cs.AI+OR+cat:cs.NE&sortBy=submittedDate&sortOrder=descending&max_results=15',
       { cache: 'no-store' }
     )
@@ -55,9 +73,9 @@ export async function fetchArxiv(): Promise<Article[]> {
 export async function fetchDevTo(): Promise<Article[]> {
   try {
     const [res1, res2] = await Promise.all([
-      fetch('https://dev.to/api/articles?per_page=15&tag=programming&top=5',
+      fetchWithTimeout('https://dev.to/api/articles?per_page=15&tag=programming&top=5',
         { cache: 'no-store' }),
-      fetch('https://dev.to/api/articles?per_page=10&tag=machinelearning&top=5',
+      fetchWithTimeout('https://dev.to/api/articles?per_page=10&tag=machinelearning&top=5',
         { cache: 'no-store' }),
     ])
     const [data1, data2]: [any[], any[]] = await Promise.all([
@@ -92,7 +110,7 @@ export async function fetchDevTo(): Promise<Article[]> {
 
 export async function fetchHackerNews(): Promise<Article[]> {
   try {
-    const idsRes = await fetch('https://hacker-news.firebaseio.com/v0/topstories.json', {
+    const idsRes = await fetchWithTimeout('https://hacker-news.firebaseio.com/v0/topstories.json', {
       cache: 'no-store',
     })
     if (!idsRes.ok) return []
@@ -100,7 +118,7 @@ export async function fetchHackerNews(): Promise<Article[]> {
     const top30 = ids.slice(0, 30)
     const items = await Promise.all(
       top30.map(id =>
-        fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`, { cache: 'no-store' })
+        fetchWithTimeout(`https://hacker-news.firebaseio.com/v0/item/${id}.json`, { cache: 'no-store' })
           .then(r => r.json())
           .catch(() => null)
       )
@@ -128,7 +146,7 @@ export async function fetchHackerNews(): Promise<Article[]> {
 
 export async function fetchIeee(): Promise<Article[]> {
   try {
-    const res = await fetch('https://ieeexplore.ieee.org/rss/TOC10.XML', {
+    const res = await fetchWithTimeout('https://ieeexplore.ieee.org/rss/TOC10.XML', {
       headers: { 'User-Agent': 'EduHub/1.0 (university-erp; educational)' },
       cache: 'no-store',
     })
@@ -152,7 +170,7 @@ export async function fetchIeee(): Promise<Article[]> {
 
 export async function fetchJmlr(): Promise<Article[]> {
   try {
-    const res = await fetch('https://jmlr.org/jmlr.xml', {
+    const res = await fetchWithTimeout('https://jmlr.org/jmlr.xml', {
       headers: { 'User-Agent': 'EduHub/1.0 (university-erp; educational)' },
       cache: 'no-store',
     })

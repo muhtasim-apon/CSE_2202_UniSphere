@@ -1,3 +1,4 @@
+import logging
 import os
 import uuid as _uuid
 from typing import Literal, Optional
@@ -13,6 +14,8 @@ _supabase = create_client(
     os.environ["SUPABASE_URL"],
     os.environ["SUPABASE_SERVICE_ROLE_KEY"],
 )
+
+logger = logging.getLogger("unisphere.achievements")
 
 router = APIRouter(prefix="/api/achievements", tags=["achievements"])
 
@@ -53,15 +56,44 @@ def _detect_file_type(mime: str, ext: str) -> str:
     return "other"
 
 
-def _delete_storage_file(file_url: str):
+def _storage_path_from_url(file_url: str) -> Optional[str]:
+    parts = (file_url or "").split("/public/achievement-media/")
+    if len(parts) < 2 or not parts[1]:
+        return None
+    # Strip any transform/cache query string Supabase may append.
+    return parts[1].split("?", 1)[0]
+
+
+def _delete_storage_files(file_urls: list) -> None:
+    """Remove achievement media objects from storage.
+
+    `.remove()` takes a LIST of paths — passing a bare string silently removed
+    nothing, so every deleted achievement leaked its files forever.
+    """
+    paths = [p for p in (_storage_path_from_url(u) for u in file_urls if u) if p]
+    if not paths:
+        return
     try:
-        parts = file_url.split("/public/achievement-media/")
-        if len(parts) > 1:
-            storage_path = parts[1]
-            _supabase.storage.from_("achievement-media").remove(storage_path)
-            print(f"DEBUG: Successfully removed file from Supabase storage: {storage_path}")
-    except Exception as e:
-        print(f"DEBUG: Failed to remove file from Supabase storage: {e}")
+        _supabase.storage.from_("achievement-media").remove(paths)
+    except Exception:
+        logger.exception("Failed to remove achievement media from storage: %s", paths)
+
+
+def _delete_storage_file(file_url: str) -> None:
+    _delete_storage_files([file_url])
+
+
+def _purge_media(table: str, id_col: str, target_id: int) -> None:
+    """Delete a parent's media rows and their storage objects.
+
+    Deleting the parent row cascades the media rows away in Postgres but leaves
+    the objects orphaned in the bucket, so collect the URLs first.
+    """
+    try:
+        rows = _supabase.table(table).select("file_url").eq(id_col, target_id).execute().data or []
+        _delete_storage_files([r.get("file_url") for r in rows])
+    except Exception:
+        logger.exception("Failed to purge %s for %s=%s", table, id_col, target_id)
 
 
 def _enrich_list(items: list, achievement_type: str, id_field: str) -> list:
@@ -85,7 +117,7 @@ def _enrich_list(items: list, achievement_type: str, id_field: str) -> list:
             key = row[skill_id_col]
             skills_map.setdefault(key, []).append(row.get("skill") or {})
     except Exception:
-        pass
+        logger.exception("_enrich_list: failed to load %s for %s", "skills", achievement_type)
 
     try:
         reactions_res = _supabase.table("achievement_reaction").select("target_id, emoji").eq("achievement_type", achievement_type).in_("target_id", ids).execute()
@@ -95,7 +127,7 @@ def _enrich_list(items: list, achievement_type: str, id_field: str) -> list:
             reactions_map.setdefault(tid, {})
             reactions_map[tid][emoji] = reactions_map[tid].get(emoji, 0) + 1
     except Exception:
-        pass
+        logger.exception("_enrich_list: failed to load %s for %s", "reactions", achievement_type)
 
     try:
         ratings_res = _supabase.table("achievement_rating").select("target_id, rating").eq("achievement_type", achievement_type).in_("target_id", ids).execute()
@@ -105,7 +137,7 @@ def _enrich_list(items: list, achievement_type: str, id_field: str) -> list:
             ratings_map.setdefault(tid, []).append(row["rating"])
         avg_map = {tid: round(sum(rs) / len(rs), 1) for tid, rs in ratings_map.items()}
     except Exception:
-        pass
+        logger.exception("_enrich_list: failed to load %s for %s", "ratings", achievement_type)
 
     try:
         comments_res = _supabase.table("achievement_comment").select("target_id").eq("achievement_type", achievement_type).in_("target_id", ids).execute()
@@ -113,7 +145,7 @@ def _enrich_list(items: list, achievement_type: str, id_field: str) -> list:
             tid = row["target_id"]
             comment_count_map[tid] = comment_count_map.get(tid, 0) + 1
     except Exception:
-        pass
+        logger.exception("_enrich_list: failed to load %s for %s", "comment counts", achievement_type)
 
     try:
         user_ids = list({item["user_id"] for item in items if item.get("user_id")})
@@ -123,7 +155,7 @@ def _enrich_list(items: list, achievement_type: str, id_field: str) -> list:
                 name = f"{row.get('first_name') or ''} {row.get('last_name') or ''}".strip()
                 author_map[row["id"]] = {"name": name or "Unknown", "avatar": row.get("avatar_url") or None}
     except Exception:
-        pass
+        logger.exception("_enrich_list: failed to load %s for %s", "author profiles", achievement_type)
 
     try:
         media_table = {"project": "project_media", "certificate": "certificate_media", "research_paper": "research_paper_media", "hackathon": "hackathon_media"}[achievement_type]
@@ -138,7 +170,7 @@ def _enrich_list(items: list, achievement_type: str, id_field: str) -> list:
                 "file_name": row.get("file_name"),
             })
     except Exception:
-        pass
+        logger.exception("_enrich_list: failed to load %s for %s", "media", achievement_type)
 
     for item in items:
         tid = item[id_field]
@@ -196,10 +228,13 @@ def _creator_name(user_id: str) -> str:
 
 def _find_skill_id_by_name(name: str) -> Optional[int]:
     key = name.lower()
+    # `%` and `_` are LIKE wildcards — an unescaped name matches unrelated
+    # skills (and "%" would match every row).
+    escaped = name.replace("\\", "\\\\").replace("%", r"\%").replace("_", r"\_")
     res = (
         _supabase.table("skill")
         .select("skill_id, skill_name")
-        .ilike("skill_name", name)
+        .ilike("skill_name", escaped)
         .limit(10)
         .execute()
     )
@@ -226,10 +261,11 @@ def _get_or_create_skill_id(name: str) -> int:
         existing_id = _find_skill_id_by_name(name)
         if existing_id is not None:
             return existing_id
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to save skill '{name}': {exc}. Run Database/skill_table_ensure.sql in Supabase SQL editor.",
+        logger.exception(
+            "Failed to insert skill %r (is the `skill` table migrated? "
+            "see Database/skill_table_ensure.sql): %s", name, exc,
         )
+        raise HTTPException(status_code=500, detail=f"Failed to save skill '{name}'")
 
     try:
         upserted = (
@@ -246,10 +282,10 @@ def _get_or_create_skill_id(name: str) -> int:
     if existing_id is not None:
         return existing_id
 
-    raise HTTPException(
-        status_code=500,
-        detail=f"Failed to save skill '{name}'. Run Database/skill_table_ensure.sql in Supabase SQL editor.",
+    logger.error(
+        "Could not resolve or create skill %r (see Database/skill_table_ensure.sql)", name
     )
+    raise HTTPException(status_code=500, detail=f"Failed to save skill '{name}'")
 
 
 def _resolve_skill_ids(skill_names: list[str]) -> list[int]:
@@ -489,10 +525,14 @@ async def list_projects(
     limit: int = 12,
     authorization: Optional[str] = Header(default=None),
 ):
-    await _auth(authorization)
-    query = _supabase.table("project").select("*").eq("is_published", True)
+    viewer = await _auth(authorization)
+    query = _supabase.table("project").select("*")
     if user_id:
         query = query.eq("user_id", user_id)
+    # An author browsing their own achievements sees their drafts too;
+    # everyone else only ever sees published rows.
+    if user_id != _user_id(viewer):
+        query = query.eq("is_published", True)
     offset = (page - 1) * limit
     res = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
     return {"projects": _enrich_list(res.data or [], "project", "project_id"), "page": page, "limit": limit}
@@ -545,8 +585,14 @@ async def update_project(
         raise HTTPException(status_code=404, detail="Project not found")
     if existing.data["user_id"] != db_user_id:
         raise HTTPException(status_code=403, detail="Not authorized")
-    update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+    # exclude_unset, not `is not None` — otherwise a field can never be
+    # cleared (e.g. removing a description).
+    update_data = body.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
     res = _supabase.table("project").update(update_data).eq("project_id", project_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Not found or nothing changed")
     return res.data[0]
 
 
@@ -559,6 +605,7 @@ async def delete_project(project_id: int, authorization: Optional[str] = Header(
         raise HTTPException(status_code=404, detail="Project not found")
     if existing.data["user_id"] != db_user_id:
         raise HTTPException(status_code=403, detail="Not authorized")
+    _purge_media("project_media", "project_id", project_id)
     _supabase.table("project").delete().eq("project_id", project_id).execute()
 
 
@@ -605,14 +652,10 @@ async def delete_certificate_media(
 ):
     user = await _auth(authorization)
     db_user_id = _user_id(user)
-    print(f"DEBUG: delete_certificate_media certificate_id={certificate_id} media_id={media_id}")
     existing = _supabase.table("certificate").select("user_id").eq("certificate_id", certificate_id).maybe_single().execute()
-    print(f"DEBUG: existing.data={existing.data if existing else None}")
     if not existing or not existing.data or existing.data["user_id"] != db_user_id:
-        print("DEBUG: raise 403 not authorized")
         raise HTTPException(status_code=403, detail="Not authorized")
     del_res = _supabase.table("certificate_media").delete().eq("media_id", media_id).eq("certificate_id", certificate_id).execute()
-    print(f"DEBUG: del_res.data={del_res.data if del_res else None}")
     if del_res and del_res.data:
         _delete_storage_file(del_res.data[0]["file_url"])
 
@@ -679,10 +722,14 @@ async def list_certificates(
     limit: int = 12,
     authorization: Optional[str] = Header(default=None),
 ):
-    await _auth(authorization)
-    query = _supabase.table("certificate").select("*").eq("is_published", True)
+    viewer = await _auth(authorization)
+    query = _supabase.table("certificate").select("*")
     if user_id:
         query = query.eq("user_id", user_id)
+    # An author browsing their own achievements sees their drafts too;
+    # everyone else only ever sees published rows.
+    if user_id != _user_id(viewer):
+        query = query.eq("is_published", True)
     offset = (page - 1) * limit
     res = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
     return {"certificates": _enrich_list(res.data or [], "certificate", "certificate_id"), "page": page, "limit": limit}
@@ -728,8 +775,14 @@ async def update_certificate(
         raise HTTPException(status_code=404, detail="Not found")
     if existing.data["user_id"] != db_user_id:
         raise HTTPException(status_code=403, detail="Not authorized")
-    update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+    # exclude_unset, not `is not None` — otherwise a field can never be
+    # cleared (e.g. removing a description).
+    update_data = body.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
     res = _supabase.table("certificate").update(update_data).eq("certificate_id", certificate_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Not found or nothing changed")
     return res.data[0]
 
 
@@ -740,6 +793,7 @@ async def delete_certificate(certificate_id: int, authorization: Optional[str] =
     existing = _supabase.table("certificate").select("user_id").eq("certificate_id", certificate_id).maybe_single().execute()
     if not existing or not existing.data or existing.data["user_id"] != db_user_id:
         raise HTTPException(status_code=403, detail="Not authorized")
+    _purge_media("certificate_media", "certificate_id", certificate_id)
     _supabase.table("certificate").delete().eq("certificate_id", certificate_id).execute()
 
 
@@ -821,10 +875,14 @@ async def list_papers(
     limit: int = 12,
     authorization: Optional[str] = Header(default=None),
 ):
-    await _auth(authorization)
-    query = _supabase.table("research_paper").select("*").eq("is_published", True)
+    viewer = await _auth(authorization)
+    query = _supabase.table("research_paper").select("*")
     if user_id:
         query = query.eq("user_id", user_id)
+    # An author browsing their own achievements sees their drafts too;
+    # everyone else only ever sees published rows.
+    if user_id != _user_id(viewer):
+        query = query.eq("is_published", True)
     offset = (page - 1) * limit
     res = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
     return {"papers": _enrich_list(res.data or [], "research_paper", "paper_id"), "page": page, "limit": limit}
@@ -872,8 +930,14 @@ async def update_paper(
         raise HTTPException(status_code=404, detail="Not found")
     if existing.data["user_id"] != db_user_id:
         raise HTTPException(status_code=403, detail="Not authorized")
-    update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+    # exclude_unset, not `is not None` — otherwise a field can never be
+    # cleared (e.g. removing a description).
+    update_data = body.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
     res = _supabase.table("research_paper").update(update_data).eq("paper_id", paper_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Not found or nothing changed")
     return res.data[0]
 
 
@@ -884,6 +948,7 @@ async def delete_paper(paper_id: int, authorization: Optional[str] = Header(defa
     existing = _supabase.table("research_paper").select("user_id").eq("paper_id", paper_id).maybe_single().execute()
     if not existing or not existing.data or existing.data["user_id"] != db_user_id:
         raise HTTPException(status_code=403, detail="Not authorized")
+    _purge_media("research_paper_media", "paper_id", paper_id)
     _supabase.table("research_paper").delete().eq("paper_id", paper_id).execute()
 
 
@@ -933,6 +998,26 @@ async def create_comment(body: CommentRequest, authorization: Optional[str] = He
     user = await _auth(authorization)
     db_user_id = _user_id(user)
 
+    # Resolve the target BEFORE inserting — otherwise a bogus target_id leaves
+    # an orphan comment attached to nothing.
+    owner_id_col = {"project": ("project", "user_id", "project_id"), "certificate": ("certificate", "user_id", "certificate_id"), "research_paper": ("research_paper", "user_id", "paper_id"), "hackathon": ("hackathon", "user_id", "hackathon_id")}[body.achievement_type]
+    owner_res = _supabase.table(owner_id_col[0]).select(owner_id_col[1]).eq(owner_id_col[2], body.target_id).maybe_single().execute()
+    if not owner_res or not owner_res.data:
+        raise HTTPException(status_code=404, detail="Target achievement not found")
+
+    if body.parent_comment_id is not None:
+        parent = (
+            _supabase.table("achievement_comment")
+            .select("comment_id")
+            .eq("comment_id", body.parent_comment_id)
+            .eq("achievement_type", body.achievement_type)
+            .eq("target_id", body.target_id)
+            .maybe_single()
+            .execute()
+        )
+        if not parent or not parent.data:
+            raise HTTPException(status_code=400, detail="Parent comment is not on this achievement")
+
     row = _supabase.table("achievement_comment").insert({
         "user_id": db_user_id,
         "achievement_type": body.achievement_type,
@@ -941,24 +1026,21 @@ async def create_comment(body: CommentRequest, authorization: Optional[str] = He
         "parent_comment_id": body.parent_comment_id,
     }).execute().data[0]
 
-    # Look up content owner to send notification
-    owner_id_col = {"project": ("project", "user_id", "project_id"), "certificate": ("certificate", "user_id", "certificate_id"), "research_paper": ("research_paper", "user_id", "paper_id"), "hackathon": ("hackathon", "user_id", "hackathon_id")}[body.achievement_type]
-    owner_res = _supabase.table(owner_id_col[0]).select(owner_id_col[1]).eq(owner_id_col[2], body.target_id).maybe_single().execute()
-    if owner_res and owner_res.data:
-        owner_id = owner_res.data[owner_id_col[1]]
-        if owner_id != db_user_id:
-            commenter_name_res = _supabase.table("profiles").select("first_name, last_name").eq("id", db_user_id).maybe_single().execute()
-            _pdata = commenter_name_res.data or {}
-            commenter_name = ((_pdata.get("first_name") or "") + " " + (_pdata.get("last_name") or "")).strip() or "Someone"
-            _supabase.table("notification").insert({
-                "recipient_id": owner_id,
-                "sender_id": db_user_id,
-                "notif_type": "new_comment",
-                "title": f"{commenter_name} commented on your {body.achievement_type.replace('_', ' ')}",
-                "body": body.body[:200],
-                "achievement_type": body.achievement_type,
-                "target_id": body.target_id,
-            }).execute()
+    owner_id = owner_res.data[owner_id_col[1]]
+    if owner_id != db_user_id:
+        commenter_name_res = _supabase.table("profiles").select("first_name, last_name").eq("id", db_user_id).maybe_single().execute()
+        _pdata = commenter_name_res.data or {}
+        commenter_name = ((_pdata.get("first_name") or "") + " " + (_pdata.get("last_name") or "")).strip() or "Someone"
+        _supabase.table("notification").insert({
+            "recipient_id": owner_id,
+            "sender_id": db_user_id,
+            "notif_type": "new_comment",
+            "title": f"{commenter_name} commented on your {body.achievement_type.replace('_', ' ')}",
+            "body": body.body[:200],
+            "achievement_type": body.achievement_type,
+            "target_id": body.target_id,
+            "is_read": False,
+        }).execute()
 
     return row
 
@@ -996,7 +1078,7 @@ async def upsert_rating(body: RateRequest, authorization: Optional[str] = Header
 
 @router.get("/comments")
 async def list_comments(
-    achievement_type: str,
+    achievement_type: Literal["project", "certificate", "research_paper", "hackathon"],
     target_id: int,
     page: int = 1,
     authorization: Optional[str] = Header(default=None),
@@ -1124,10 +1206,14 @@ async def list_hackathons(
     limit: int = 12,
     authorization: Optional[str] = Header(default=None),
 ):
-    await _auth(authorization)
-    query = _supabase.table("hackathon").select("*").eq("is_published", True)
+    viewer = await _auth(authorization)
+    query = _supabase.table("hackathon").select("*")
     if user_id:
         query = query.eq("user_id", user_id)
+    # An author browsing their own achievements sees their drafts too;
+    # everyone else only ever sees published rows.
+    if user_id != _user_id(viewer):
+        query = query.eq("is_published", True)
     offset = (page - 1) * limit
     res = query.order("created_at", desc=True).range(offset, offset + limit - 1).execute()
     return {"hackathons": _enrich_list(res.data or [], "hackathon", "hackathon_id"), "page": page, "limit": limit}
@@ -1173,8 +1259,14 @@ async def update_hackathon(
         raise HTTPException(status_code=404, detail="Hackathon not found")
     if existing.data["user_id"] != db_user_id:
         raise HTTPException(status_code=403, detail="Not authorized")
-    update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+    # exclude_unset, not `is not None` — otherwise a field can never be
+    # cleared (e.g. removing a description).
+    update_data = body.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
     res = _supabase.table("hackathon").update(update_data).eq("hackathon_id", hackathon_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Not found or nothing changed")
     return res.data[0]
 
 
@@ -1185,6 +1277,7 @@ async def delete_hackathon(hackathon_id: int, authorization: Optional[str] = Hea
     existing = _supabase.table("hackathon").select("user_id").eq("hackathon_id", hackathon_id).maybe_single().execute()
     if not existing or not existing.data or existing.data["user_id"] != db_user_id:
         raise HTTPException(status_code=403, detail="Not authorized")
+    _purge_media("hackathon_media", "hackathon_id", hackathon_id)
     _supabase.table("hackathon").delete().eq("hackathon_id", hackathon_id).execute()
 
 
@@ -1214,6 +1307,8 @@ async def update_project_advisor(
     elif "advisor_user_id" in body.model_fields_set:
         update_data["advisor_user_id"] = None
     res = _supabase.table("project").update(update_data).eq("project_id", project_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Not found or nothing changed")
     return res.data[0]
 
 

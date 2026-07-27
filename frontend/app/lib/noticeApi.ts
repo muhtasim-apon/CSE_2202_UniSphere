@@ -30,9 +30,12 @@ export type Attachment = {
   created_at: string
 }
 
-export type Reaction = {
-  reaction: string
-  user_id: string
+/** Aggregate tallies plus the caller's own choice. The server deliberately does
+ *  not return per-user rows — that leaked every user's reaction to everyone. */
+export type ReactionSummary = {
+  counts: Record<string, number>
+  my_reaction: string | null
+  total: number
 }
 
 export type PollData = {
@@ -116,7 +119,7 @@ export async function deleteNotice(id: string, token: string): Promise<void> {
   })
 }
 
-export async function getReactions(noticeId: string, token: string): Promise<Reaction[]> {
+export async function getReactions(noticeId: string, token: string): Promise<ReactionSummary> {
   const res = await apiFetch(`${BASE}/api/notices/${noticeId}/reactions`, {
     headers: { Authorization: `Bearer ${token}` },
   })

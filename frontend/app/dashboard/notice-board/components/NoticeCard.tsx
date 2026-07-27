@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Download, FileText, Pencil, Trash2 } from 'lucide-react'
 import {
   type Attachment,
   type NoticePost,
   type PollData,
-  type Reaction,
+  type ReactionSummary,
   castVote,
   getAttachments,
   getPoll,
@@ -74,12 +74,13 @@ type NoticeCardProps = {
 }
 
 export default function NoticeCard({ notice, currentUserId, token, onEdit, onDelete }: NoticeCardProps) {
-  const [reactions, setReactions] = useState<Reaction[]>([])
+  const [reactions, setReactions] = useState<ReactionSummary>({ counts: {}, my_reaction: null, total: 0 })
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [pollData, setPollData] = useState<PollData | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [reacting, setReacting] = useState(false)
   const [voting, setVoting] = useState(false)
+  const [actionError, setActionError] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -103,29 +104,35 @@ export default function NoticeCard({ notice, currentUserId, token, onEdit, onDel
     return () => { cancelled = true }
   }, [notice.id, notice.attachment_count, notice.has_poll, token])
 
-  const reactionCounts = useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const r of reactions) counts[r.reaction] = (counts[r.reaction] ?? 0) + 1
-    return counts
-  }, [reactions])
-
-  const myReaction = reactions.find(r => r.user_id === currentUserId)?.reaction ?? null
+  const reactionCounts = reactions.counts
+  const myReaction = reactions.my_reaction
 
   async function handleReact(key: string) {
     if (reacting) return
     setReacting(true)
+    const previous = reactions
+    // Optimistic, but with a rollback — a swallowed failure used to leave the
+    // button looking active when nothing was saved.
+    const next = { ...previous, counts: { ...previous.counts } }
+    if (myReaction) next.counts[myReaction] = Math.max(0, (next.counts[myReaction] ?? 0) - 1)
+    if (myReaction === key) {
+      next.my_reaction = null
+      next.total = Math.max(0, previous.total - 1)
+    } else {
+      next.counts[key] = (next.counts[key] ?? 0) + 1
+      next.my_reaction = key
+      next.total = myReaction ? previous.total : previous.total + 1
+    }
+    setReactions(next)
+
     try {
-      if (myReaction === key) {
-        await removeReaction(notice.id, token)
-        setReactions(prev => prev.filter(r => r.user_id !== currentUserId))
-      } else {
-        await upsertReaction(notice.id, key, token)
-        setReactions(prev => [
-          ...prev.filter(r => r.user_id !== currentUserId),
-          { reaction: key, user_id: currentUserId },
-        ])
-      }
-    } catch {}
+      if (myReaction === key) await removeReaction(notice.id, token)
+      else await upsertReaction(notice.id, key, token)
+      setActionError('')
+    } catch (e: unknown) {
+      setReactions(previous)
+      setActionError(e instanceof Error ? e.message : 'Could not save your reaction')
+    }
     setReacting(false)
   }
 
@@ -133,27 +140,16 @@ export default function NoticeCard({ notice, currentUserId, token, onEdit, onDel
     if (voting || !pollData) return
     setVoting(true)
     try {
+      // Only update the tally once the server has accepted the vote — the old
+      // code incremented first and swallowed the error, so a rejected vote
+      // still appeared to count.
       await castVote(notice.id, optionId, token)
-      setPollData(prev => {
-        if (!prev) return prev
-        const newCounts = { ...prev.vote_counts }
-        if (!prev.poll.is_multiple) {
-          for (const prevId of prev.my_votes) {
-            newCounts[prevId] = Math.max(0, (newCounts[prevId] ?? 0) - 1)
-          }
-          return {
-            ...prev,
-            vote_counts: { ...newCounts, [optionId]: (newCounts[optionId] ?? 0) + 1 },
-            my_votes: [optionId],
-          }
-        }
-        return {
-          ...prev,
-          vote_counts: { ...newCounts, [optionId]: (newCounts[optionId] ?? 0) + 1 },
-          my_votes: [...prev.my_votes, optionId],
-        }
-      })
-    } catch {}
+      const fresh = await getPoll(notice.id, token)
+      setPollData(fresh)
+      setActionError('')
+    } catch (e: unknown) {
+      setActionError(e instanceof Error ? e.message : 'Could not record your vote')
+    }
     setVoting(false)
   }
 
@@ -346,6 +342,12 @@ export default function NoticeCard({ notice, currentUserId, token, onEdit, onDel
             )}
           </div>
         </div>
+      )}
+
+      {actionError && (
+        <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600 dark:bg-red-900/20 dark:text-red-400">
+          {actionError}
+        </p>
       )}
 
       {/* Reaction bar */}

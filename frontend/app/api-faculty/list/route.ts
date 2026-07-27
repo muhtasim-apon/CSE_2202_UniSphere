@@ -180,25 +180,38 @@ export async function GET() {
         'Accept-Language': 'en-US,en;q=0.5',
         Referer: 'https://www.du.ac.bd/',
       },
+      signal: AbortSignal.timeout(10000),
       next: { revalidate: 3600 },
     })
 
     if (!res.ok) {
+      // 502, not 200 — the client must be able to tell "DU is down" from
+      // "there are no faculty members".
       return NextResponse.json(
         { error: `DU server returned ${res.status}`, faculty: [] },
-        { status: 200 }
+        { status: 502 }
       )
     }
 
     const html = await res.text()
     const faculty = parseFacultyList(html, BASE_URL)
 
+    if (faculty.length === 0) {
+      // The page loaded but nothing matched, which in practice means DU changed
+      // their markup and the scraper needs updating.
+      console.error('Faculty list parsed 0 members — DU markup may have changed')
+      return NextResponse.json(
+        { error: 'Could not parse the DU faculty page', faculty: [] },
+        { status: 502 }
+      )
+    }
+
     return NextResponse.json({ faculty, fetchedAt: new Date().toISOString() })
   } catch (err) {
     console.error('Faculty list fetch error:', err)
     return NextResponse.json(
       { error: 'Network error', faculty: [] },
-      { status: 200 }
+      { status: 502 }
     )
   }
 }

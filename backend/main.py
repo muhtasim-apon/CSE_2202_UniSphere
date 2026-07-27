@@ -541,8 +541,10 @@ async def delete_notice(
     authorization: Optional[str] = Header(default=None),
 ):
     user = await get_current_user(authorization)
-    existing = supabase.table("notice_board_post").select("author_id").eq("id", notice_id).single().execute()
-    if not existing.data or existing.data["author_id"] != user.id:
+    existing = supabase.table("notice_board_post").select("author_id").eq("id", notice_id).maybe_single().execute()
+    if not existing or not existing.data:
+        raise HTTPException(status_code=404, detail="Notice not found")
+    if existing.data["author_id"] != user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
     supabase.table("notice_board_post").delete().eq("id", notice_id).execute()
 
@@ -576,9 +578,19 @@ async def get_reactions(
     notice_id: str,
     authorization: Optional[str] = Header(default=None),
 ):
-    await get_current_user(authorization)
+    user = await get_current_user(authorization)
     res = supabase.table("notice_board_reaction").select("reaction, user_id").eq("post_id", notice_id).execute()
-    return res.data
+    rows = res.data or []
+
+    # Returning every row exposed which user reacted with what to everyone.
+    # Callers only need the tallies plus their own reaction.
+    counts: dict = {}
+    my_reaction = None
+    for r in rows:
+        counts[r["reaction"]] = counts.get(r["reaction"], 0) + 1
+        if r["user_id"] == user.id:
+            my_reaction = r["reaction"]
+    return {"counts": counts, "my_reaction": my_reaction, "total": len(rows)}
 
 
 @app.post("/api/notices/{notice_id}/poll", status_code=201)
@@ -588,9 +600,18 @@ async def create_poll(
     authorization: Optional[str] = Header(default=None),
 ):
     user = await get_current_user(authorization)
-    existing = supabase.table("notice_board_post").select("author_id").eq("id", notice_id).single().execute()
-    if not existing.data or existing.data["author_id"] != user.id:
+    existing = supabase.table("notice_board_post").select("author_id").eq("id", notice_id).maybe_single().execute()
+    if not existing or not existing.data:
+        raise HTTPException(status_code=404, detail="Notice not found")
+    if existing.data["author_id"] != user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
+    # post_id is UNIQUE — a second create would surface as a raw 500.
+    existing_poll = (
+        supabase.table("notice_board_poll").select("id").eq("post_id", notice_id).maybe_single().execute()
+    )
+    if existing_poll and existing_poll.data:
+        raise HTTPException(status_code=409, detail="This notice already has a poll")
+
     poll_data: dict = {
         "post_id": notice_id,
         "question": body.question,
@@ -615,8 +636,8 @@ async def get_poll(
     authorization: Optional[str] = Header(default=None),
 ):
     user = await get_current_user(authorization)
-    poll = supabase.table("notice_board_poll").select("*").eq("post_id", notice_id).single().execute()
-    if not poll.data:
+    poll = supabase.table("notice_board_poll").select("*").eq("post_id", notice_id).maybe_single().execute()
+    if not poll or not poll.data:
         raise HTTPException(status_code=404, detail="No poll found")
     options = (
         supabase.table("notice_board_poll_option")
@@ -724,8 +745,10 @@ async def upload_attachment(
     import uuid as _uuid
 
     user = await get_current_user(authorization)
-    existing = supabase.table("notice_board_post").select("author_id").eq("id", notice_id).single().execute()
-    if not existing.data or existing.data["author_id"] != user.id:
+    existing = supabase.table("notice_board_post").select("author_id").eq("id", notice_id).maybe_single().execute()
+    if not existing or not existing.data:
+        raise HTTPException(status_code=404, detail="Notice not found")
+    if existing.data["author_id"] != user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
     mime_in = (file.content_type or "application/octet-stream").split(";")[0].strip().lower()

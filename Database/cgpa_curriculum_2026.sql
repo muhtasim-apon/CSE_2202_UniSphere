@@ -9,10 +9,22 @@
 -- The curriculum instead grades a COURSE once, out of 100, assembled from
 -- fixed-weight mark heads:
 --
---   Theory  Class Participation 5 · Class Test (best 1 of 2) 10 ·
---           Group Assignment/Presentation 10 · Midterm 25 · Final 50
---   Lab     Class Participation 10 · Continuous Lab Performance 30 ·
---           Lab Reports 10 · Lab Viva-Voce 20 · Capstone/Demo 30
+--   Theory  Class Participation 5 (from attendance %) · Class Test (best 1 of
+--           2, scaled to 10) · Group Assignment/Presentation 5 · Midterm 20 ·
+--           Final 60
+--   Lab     Class Participation 10 (from attendance %) · Continuous Lab
+--           Performance 30 · Lab Reports 10 · Lab Viva-Voce 20 · Capstone/Demo
+--           30
+--
+-- Theory mark heads sum to 5 + 10 + 5 + 20 + 60 = 100; lab mark heads
+-- sum to 10 + 30 + 10 + 20 + 30 = 100. Both totals are enforced by the
+-- test suite (tests/test_cgpa.py::test_weights_sum_to_100).
+--
+-- "Class Participation" is derived from the attendance tables:
+-- attendance_session + attendance_record. The student's attendance % is
+-- computed as (Present + Late) / Total sessions × 100, then contributes
+-- (pct / 100) × weight toward the course total. A teacher with no
+-- attendance sessions recorded yet contributes 0 to participation.
 --
 --   SGPA = Σ Ci·Gi / Σ Ci  over one semester
 --   CGPA = Σ Ci·Gi / Σ Ci  over all semesters   (both to 2 decimals)

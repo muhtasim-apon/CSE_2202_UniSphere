@@ -166,10 +166,10 @@ def _require_student(profile: dict) -> int:
 
 THEORY_WEIGHTS = {
     "participation": 5,
-    "class_test":    10,   # best 1 of 2
-    "assignment":    10,
-    "midterm":       25,
-    "final":         50,
+    "class_test":    10,   # best 1 of 2, scaled from 2 CTs of unequal raw marks
+    "assignment":     5,   # group assignment / presentation, scaled to 5
+    "midterm":       20,   # scaled to 20
+    "final":         60,   # scaled to 60
 }
 LAB_WEIGHTS = {
     "participation": 10,
@@ -1057,6 +1057,48 @@ def _calc_cgpa(student_id: int) -> dict:
         by_course.setdefault(exam["manual_course_id"], {}).setdefault(head, []).append(
             (float(m["marks_obtained"]), float(exam["total_marks"]))
         )
+
+    # Class Participation is derived from attendance records (curriculum §18.4):
+    # 5 marks for theory, 10 marks for lab. The student's attendance % is the
+    # percentage of sessions where they were Present or Late. We synthesise a
+    # single (obtained, total) pair so the existing grade_course math applies
+    # uniformly: contribution = (pct/100) × weight.
+    if course_ids:
+        attendance_rows = (
+            _supabase.table("attendance_record")
+            .select(
+                "status,"
+                "session:attendance_session!inner(manual_course_id)"
+            )
+            .eq("student_id", student_id)
+            .in_("session.manual_course_id", course_ids)
+            .execute()
+        ).data or []
+
+        attn_by_course: dict = {}
+        for r in attendance_rows:
+            sess = r.get("session") or {}
+            cid = sess.get("manual_course_id")
+            if not cid:
+                continue
+            bucket = attn_by_course.setdefault(cid, {"present": 0, "late": 0, "total": 0})
+            bucket["total"] += 1
+            if r["status"] == "Present":
+                bucket["present"] += 1
+            elif r["status"] == "Late":
+                bucket["late"] += 1
+
+        for cid, bucket in attn_by_course.items():
+            if not bucket["total"]:
+                continue
+            attended = bucket["present"] + bucket["late"]
+            pct = round((attended / bucket["total"]) * 100, 2)
+            # Inject only if the course actually weights participation (both
+            # theory and lab do, but be defensive in case weights change).
+            if "participation" in _weights_for((courses.get(cid) or {}).get("course_type") or "theory"):
+                by_course.setdefault(cid, {}).setdefault("participation", []).append(
+                    (pct, 100.0)
+                )
 
     graded, incomplete = [], []
     for cid, course in courses.items():

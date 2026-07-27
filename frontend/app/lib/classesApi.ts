@@ -68,24 +68,90 @@ export interface ExamMark {
   entered_at: string
 }
 
-export interface ExamBreakdown {
-  exam_name: string | null
-  exam_type: string | null
-  grade: string | null
-  grade_points: number | null
-  credit_hours: number | null
-  marks_obtained: number | null
-  total_marks: number | null
+/** One curriculum mark head (§18.4) and its contribution to the course total. */
+export interface MarkHead {
+  head: string
+  weight: number
+  obtained: number | null
+  total: number | null
+  contribution: number | null
+}
+
+/** A course graded once out of 100 (§18.8) — not a single exam. */
+export interface CourseResult {
+  course_id: number
   course_name: string | null
   course_code: string | null
+  course_type: 'theory' | 'lab'
+  credit_hours: number
+  semester: string | null
+  semester_number: number | null
+  course_pct: number
+  grade: string
+  grade_points: number
+  is_complete: boolean
+  heads: MarkHead[]
+}
+
+export interface SemesterResult {
+  semester_number: number | null
+  sgpa: number
+  credits: number
+  courses: CourseResult[]
+}
+
+export interface IncompleteCourse {
+  course_id: number
+  course_name: string | null
+  course_code: string | null
+  credit_hours: number
+  provisional_pct: number
+  heads: MarkHead[]
 }
 
 export interface CGPAResult {
   cgpa: number
-  total_credits: number
+  total_credits_earned: number
+  total_credits_attempted: number
   total_points: number
-  exam_count: number
-  breakdown: ExamBreakdown[]
+  course_count: number
+  f_grade_count: number
+  semesters: SemesterResult[]
+  incomplete_courses: IncompleteCourse[]
+  /** @deprecated alias for total_credits_earned */
+  total_credits: number
+}
+
+/** Curriculum §18.4 display labels for each mark head. */
+export const MARK_HEAD_LABELS: Record<string, string> = {
+  participation: 'Class Participation',
+  class_test:    'Class Test (best 1 of 2)',
+  assignment:    'Assignment / Presentation',
+  midterm:       'Midterm Examination',
+  final:         'Semester Final',
+  continuous:    'Continuous Lab Performance',
+  reports:       'Lab Reports',
+  viva:          'Lab Viva-Voce',
+  capstone:      'Capstone / Demo',
+}
+
+/** Degree requirements (curriculum §7h, §7i). */
+export const REQUIRED_CREDITS = 150
+export const MIN_GRADUATION_CGPA = 2.0
+
+/** Final-exam eligibility bands (§18.6). */
+export type AttendanceBand = 'eligible' | 'fined' | 'barred'
+
+export function attendanceBand(pct: number): AttendanceBand {
+  if (pct >= 75) return 'eligible'
+  if (pct >= 60) return 'fined'
+  return 'barred'
+}
+
+export const ATTENDANCE_BAND_LABEL: Record<AttendanceBand, string> = {
+  eligible: 'Eligible for final exam',
+  fined:    'Eligible with fine (below 75%)',
+  barred:   'Not eligible — below 60%',
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────

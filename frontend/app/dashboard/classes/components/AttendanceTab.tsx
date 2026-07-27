@@ -6,7 +6,8 @@ import {
 } from 'lucide-react'
 import {
   getCourseAttendanceFull, getMyAttendanceDetail, createAttendanceSession, updateAttendanceRecord,
-  type SessionWithRecords, type StudentAttendanceCourse,
+  attendanceBand, ATTENDANCE_BAND_LABEL,
+  type AttendanceBand, type SessionWithRecords, type StudentAttendanceCourse,
 } from '@/app/lib/classesApi'
 
 type Props = {
@@ -24,6 +25,30 @@ const STATUS_STYLES: Record<string, string> = {
 }
 const STATUSES = ['Present', 'Absent', 'Late', 'Excused'] as const
 
+// Final-exam eligibility bands (curriculum §18.6)
+const BAND_STYLES: Record<AttendanceBand, { border: string; bg: string; text: string; bar: string }> = {
+  eligible: {
+    border: 'border-border', bg: 'bg-card',
+    text: 'text-emerald-600 dark:text-emerald-300', bar: 'bg-emerald-500',
+  },
+  fined: {
+    border: 'border-amber-200 dark:border-amber-500/30', bg: 'bg-amber-50 dark:bg-amber-500/10',
+    text: 'text-amber-600 dark:text-amber-300', bar: 'bg-amber-500',
+  },
+  barred: {
+    border: 'border-red-200 dark:border-red-500/30', bg: 'bg-red-50 dark:bg-red-500/10',
+    text: 'text-red-600 dark:text-red-300', bar: 'bg-red-500',
+  },
+}
+
+/** Local calendar date (YYYY-MM-DD). toISOString() is UTC and rolls an evening
+ *  class in UTC+6 back to the previous day. */
+function todayLocalISO(): string {
+  const d = new Date()
+  const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+  return local.toISOString().split('T')[0]
+}
+
 // ── Teacher view ─────────────────────────────────────────────────────────────
 
 function TeacherView({ token, courseId }: { token: string; courseId: number }) {
@@ -32,11 +57,12 @@ function TeacherView({ token, courseId }: { token: string; courseId: number }) {
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [statusMap, setStatusMap] = useState<Record<string, string>>({})
 
-  const [sessionDate, setSessionDate] = useState(new Date().toISOString().split('T')[0])
+  const [sessionDate, setSessionDate] = useState(todayLocalISO)
   const [sessionTitle, setSessionTitle] = useState('')
   const [topic, setTopic] = useState('')
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
+  const [saveError, setSaveError] = useState('')
 
   const load = useCallback(() => {
     setLoading(true)
@@ -69,10 +95,22 @@ function TeacherView({ token, courseId }: { token: string; courseId: number }) {
 
   async function updateStatus(sessionId: number, studentId: number, status: string) {
     const key = `${sessionId}-${studentId}`
+    const previous = statusMap[key]
     setStatusMap(prev => ({ ...prev, [key]: status }))
     try {
       await updateAttendanceRecord(token, sessionId, studentId, status)
-    } catch {}
+      setSaveError('')
+    } catch (e: unknown) {
+      // Roll the optimistic write back — a silent failure would leave the
+      // teacher believing attendance was saved.
+      setStatusMap(prev => {
+        const next = { ...prev }
+        if (previous === undefined) delete next[key]
+        else next[key] = previous
+        return next
+      })
+      setSaveError(e instanceof Error ? e.message : 'Failed to save attendance')
+    }
   }
 
   const inputClass = 'w-full rounded-xl border border-border bg-card px-3 py-2 text-sm focus:border-accent focus:ring-2 focus:ring-accent/20 focus:outline-none'
@@ -110,6 +148,11 @@ function TeacherView({ token, courseId }: { token: string; courseId: number }) {
       {/* Session log */}
       <div>
         <h3 className="font-semibold text-sm text-text-primary mb-2">Session Log</h3>
+        {saveError && (
+          <p className="mb-2 rounded-xl bg-red-50 px-4 py-2 text-xs text-red-600 dark:bg-red-500/10 dark:text-red-300">
+            {saveError}
+          </p>
+        )}
         {loading ? (
           <div className="space-y-2">{[1,2,3].map(i=><div key={i} className="h-14 animate-pulse rounded-xl bg-border"/>)}</div>
         ) : sessions.length === 0 ? (
@@ -231,31 +274,33 @@ function StudentView({ token }: { token: string }) {
       {courses.map(c => {
         const open = expandedCourse === c.course_id
         const pct = c.attendance_pct
-        const low = pct < 75 && c.total_sessions > 0
+        const scored = c.total_sessions > 0
+        const band = attendanceBand(pct)
+        const style = scored ? BAND_STYLES[band] : BAND_STYLES.eligible
 
         return (
-          <div key={c.course_id} className={`rounded-xl border overflow-hidden ${low ? 'border-red-200 dark:border-red-500/30' : 'border-border'}`}>
+          <div key={c.course_id} className={`rounded-xl border overflow-hidden ${style.border}`}>
             <button
               onClick={() => setExpandedCourse(open ? null : c.course_id)}
-              className={`w-full text-left px-4 py-3 hover:bg-accent/5 transition ${low ? 'bg-red-50 dark:bg-red-500/10' : 'bg-card'}`}
+              className={`w-full text-left px-4 py-3 hover:bg-accent/5 transition ${scored ? style.bg : 'bg-card'}`}
             >
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className="font-semibold text-sm text-text-primary">{c.course_name}</p>
                     {c.course_code && <span className="text-xs rounded-full bg-primary/10 text-primary px-2 py-0.5 font-medium">{c.course_code}</span>}
-                    {low && <AlertTriangle className="h-3.5 w-3.5 text-red-500" />}
+                    {scored && band !== 'eligible' && <AlertTriangle className={`h-3.5 w-3.5 ${style.text}`} />}
                   </div>
                   {c.semester && <p className="text-xs text-muted mt-0.5">{c.semester}</p>}
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className={`text-sm font-bold ${low ? 'text-red-600 dark:text-red-300' : 'text-emerald-600 dark:text-emerald-300'}`}>{pct}%</span>
+                  <span className={`text-sm font-bold ${scored ? style.text : 'text-muted'}`}>{pct}%</span>
                   {open ? <ChevronUp className="h-4 w-4 text-muted" /> : <ChevronDown className="h-4 w-4 text-muted" />}
                 </div>
               </div>
 
               <div className="mt-2 h-1.5 rounded-full bg-border">
-                <div className={`h-1.5 rounded-full transition-all ${low ? 'bg-red-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                <div className={`h-1.5 rounded-full transition-all ${style.bar}`} style={{ width: `${Math.min(pct, 100)}%` }} />
               </div>
 
               <div className="mt-2 flex gap-3 text-xs">
@@ -265,7 +310,11 @@ function StudentView({ token }: { token: string }) {
                 {c.excused > 0 && <span className="text-blue-700 dark:text-blue-300">~ {c.excused} Excused</span>}
                 <span className="text-muted">{c.total_sessions} total</span>
               </div>
-              {low && <p className="mt-1 text-xs text-red-600 dark:text-red-300 font-medium">⚠ Attendance below 75%</p>}
+              {scored && (
+                <p className={`mt-1 text-xs font-medium ${style.text}`}>
+                  {band === 'eligible' ? '✓' : '⚠'} {ATTENDANCE_BAND_LABEL[band]}
+                </p>
+              )}
             </button>
 
             {open && (

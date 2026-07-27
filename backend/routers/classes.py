@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import secrets
@@ -12,6 +13,8 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, File, Form, HTTPException, Header, Query, Request, UploadFile
 from pydantic import BaseModel, Field
 from supabase import create_client
+
+logger = logging.getLogger("unisphere.classes")
 
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 
@@ -156,9 +159,72 @@ def _require_student(profile: dict) -> int:
     return sid
 
 
-# ── GRADE HELPER ──────────────────────────────────────────────────────────────
+# ── CURRICULUM GRADING (DU CSE OBE, §18.4 – §18.10) ──────────────────────────
+#
+# A course is graded ONCE out of 100, assembled from fixed-weight mark heads —
+# not once per exam. See Database/cgpa_curriculum_2026.sql for the rationale.
+
+THEORY_WEIGHTS = {
+    "participation": 5,
+    "class_test":    10,   # best 1 of 2
+    "assignment":    10,
+    "midterm":       25,
+    "final":         50,
+}
+LAB_WEIGHTS = {
+    "participation": 10,
+    "continuous":    30,
+    "reports":       10,
+    "viva":          20,
+    "capstone":      30,
+}
+
+# Legacy exams predate `mark_head`; fall back to their exam_type.
+EXAM_TYPE_TO_HEAD = {
+    "Midterm":      "midterm",
+    "Final":        "final",
+    "Quiz":         "class_test",
+    "Assignment":   "assignment",
+    "Presentation": "assignment",
+    "Lab":          "continuous",
+    "Viva":         "viva",
+}
+
+# The head whose presence means the course is finished and may enter the CGPA.
+TERMINAL_HEAD = {"theory": "final", "lab": "capstone"}
+
+# Grades excluded from the GPA numerator/denominator entirely (§18.9).
+NON_GPA_GRADES = {"W"}
+# Grades that earn no credit even though they count in the denominator (§18.10).
+NO_CREDIT_GRADES = {"F", "W", "I"}
+
+
+def _weights_for(course_type: str) -> dict:
+    return LAB_WEIGHTS if course_type == "lab" else THEORY_WEIGHTS
+
+
+def _head_of(exam: dict) -> Optional[str]:
+    return exam.get("mark_head") or EXAM_TYPE_TO_HEAD.get(exam.get("exam_type") or "")
+
+
+def _grade_from_pct(pct: float) -> tuple[str, float]:
+    """Curriculum §18.8 letter grade / grade point from a course total out of 100."""
+    if pct >= 80: return ("A+", 4.00)
+    if pct >= 75: return ("A",  3.75)
+    if pct >= 70: return ("A-", 3.50)
+    if pct >= 65: return ("B+", 3.25)
+    if pct >= 60: return ("B",  3.00)
+    if pct >= 55: return ("B-", 2.75)
+    if pct >= 50: return ("C+", 2.50)
+    if pct >= 45: return ("C",  2.25)
+    if pct >= 40: return ("D",  2.00)
+    return ("F", 0.00)
+
 
 def _compute_grade(marks: float, total: float) -> tuple[str, float]:
+    """Single-exam grade. Used for per-exam display only — never for CGPA."""
+    if total <= 0:
+        return ("F", 0.00)
     pct = (marks / total) * 100
     if pct >= 80:  return ("A+", 4.00)
     if pct >= 75:  return ("A",  3.75)
@@ -830,25 +896,13 @@ async def upsert_mark(exam_id: int, student_id: int, body: SingleMarkRequest, au
                 "is_read":      False,
             }).execute()
     except Exception:
-        pass
+        logger.exception("Failed to notify student %s of exam mark", student_id)
 
     # Auto-recalculate CGPA after mark entry
     try:
-        result = _calc_cgpa(student_id)
-        _supabase.table("student").update({
-            "cgpa":          result["cgpa"],
-            "total_credits": int(result["total_credits"]),
-        }).eq("student_id", student_id).execute()
-        _supabase.table("cgpa_record").insert({
-            "student_id":    student_id,
-            "cgpa":          result["cgpa"],
-            "total_credits": result["total_credits"],
-            "total_points":  result["total_points"],
-            "exam_count":    result["exam_count"],
-            "source":        "exam_marks",
-        }).execute()
+        _persist_cgpa(student_id, source="exam_marks")
     except Exception:
-        pass
+        logger.exception("CGPA recalculation failed for student %s", student_id)
 
     return res.data[0]
 
@@ -872,35 +926,244 @@ async def get_exam_marks(exam_id: int, authorization: Optional[str] = Header(def
 # CGPA
 # ══════════════════════════════════════════════════════════════════════════════
 
+def grade_course(course: dict, marks_by_head: dict) -> dict:
+    """Grade one course out of 100 from its weighted mark heads (§18.4).
+
+    `marks_by_head` maps a head name to a list of (obtained, total) pairs.
+    Pure function of its arguments — no I/O — so it is directly unit-testable.
+    """
+    course_type = course.get("course_type") or "theory"
+    weights = _weights_for(course_type)
+
+    course_pct = 0.0
+    heads = []
+    for head, weight in weights.items():
+        pairs = [(o, t) for o, t in marks_by_head.get(head, []) if t and t > 0]
+        if not pairs:
+            heads.append({"head": head, "weight": weight, "obtained": None,
+                          "total": None, "contribution": None})
+            continue
+
+        if head == "class_test":
+            # "Class Test (Best 1 of 2)" — the curriculum counts the best score.
+            ratio = max(o / t for o, t in pairs)
+            best = max(pairs, key=lambda p: p[0] / p[1])
+            obtained, total = best
+        else:
+            obtained = sum(o for o, _ in pairs)
+            total = sum(t for _, t in pairs)
+            ratio = obtained / total
+
+        ratio = min(max(ratio, 0.0), 1.0)
+        contribution = ratio * weight
+        course_pct += contribution
+        heads.append({"head": head, "weight": weight,
+                      "obtained": round(obtained, 2), "total": round(total, 2),
+                      "contribution": round(contribution, 2)})
+
+    course_pct = round(min(course_pct, 100.0), 2)
+
+    # A course only enters the CGPA once its terminal head (Final for theory,
+    # Capstone for lab) has been marked — a half-graded course would otherwise
+    # look like a fail.
+    terminal = TERMINAL_HEAD.get(course_type, "final")
+    is_complete = bool(marks_by_head.get(terminal))
+
+    grade, gp = _grade_from_pct(course_pct)
+    return {
+        "course_pct":   course_pct,
+        "grade":        grade,
+        "grade_points": gp,
+        "is_complete":  is_complete,
+        "heads":        heads,
+    }
+
+
 def _calc_cgpa(student_id: int) -> dict:
-    marks = (
-        _supabase.table("exam_mark")
-        .select("*, exam:exam(exam_name, exam_type, total_marks, credit_hours, manual_course_id, manual_course:manual_course(course_name, course_code, semester_number))")
+    """Per-course, curriculum-weighted CGPA/SGPA (§18.4 – §18.10).
+
+    One grade per COURSE weighted by that course's credit_hours — not one grade
+    per exam, which is what this used to do and which inflated both cgpa and
+    total_credits by roughly the number of exams per course.
+    """
+    enrolments = (
+        _supabase.table("manual_enrollment")
+        .select(
+            "manual_course_id, "
+            "course:manual_course(manual_course_id, course_name, course_code, "
+            "credit_hours, course_type, semester, semester_number)"
+        )
         .eq("student_id", student_id)
-        .execute().data or []
-    )
-    weighted, credits = 0.0, 0.0
-    breakdown = []
+        .eq("is_active", True)
+        .execute()
+    ).data or []
+
+    courses = {e["manual_course_id"]: e["course"] for e in enrolments if e.get("course")}
+    if not courses:
+        return _empty_cgpa()
+
+    course_ids = list(courses)
+    exams = (
+        _supabase.table("exam")
+        .select("exam_id, exam_name, exam_type, mark_head, total_marks, manual_course_id")
+        .in_("manual_course_id", course_ids)
+        .execute()
+    ).data or []
+    exams_by_id = {e["exam_id"]: e for e in exams}
+
+    marks = []
+    if exams_by_id:
+        marks = (
+            _supabase.table("exam_mark")
+            .select("exam_id, marks_obtained")
+            .eq("student_id", student_id)
+            .in_("exam_id", list(exams_by_id))
+            .execute()
+        ).data or []
+
+    # course_id → head → [(obtained, total)]
+    by_course: dict = {cid: {} for cid in course_ids}
     for m in marks:
-        exam = m.get("exam") or {}
-        mc   = (exam.get("manual_course") or {})
-        gp, ch = m.get("grade_points"), exam.get("credit_hours")
-        if gp is not None and ch is not None:
-            weighted += float(gp) * float(ch)
-            credits  += float(ch)
-        breakdown.append({
-            "exam_name":     exam.get("exam_name"),
-            "exam_type":     exam.get("exam_type"),
-            "grade":         m.get("grade"),
-            "grade_points":  m.get("grade_points"),
-            "credit_hours":  ch,
-            "marks_obtained":m.get("marks_obtained"),
-            "total_marks":   exam.get("total_marks"),
-            "course_name":   mc.get("course_name"),
-            "course_code":   mc.get("course_code"),
-        })
-    cgpa = round(weighted / credits, 2) if credits > 0 else 0.0
-    return {"cgpa": cgpa, "total_credits": credits, "total_points": weighted, "exam_count": len(marks), "breakdown": breakdown}
+        exam = exams_by_id.get(m["exam_id"])
+        if not exam:
+            continue
+        head = _head_of(exam)
+        if not head:
+            continue   # untagged legacy exam — cannot be weighted, so skipped
+        by_course.setdefault(exam["manual_course_id"], {}).setdefault(head, []).append(
+            (float(m["marks_obtained"]), float(exam["total_marks"]))
+        )
+
+    graded, incomplete = [], []
+    for cid, course in courses.items():
+        weights = _weights_for(course.get("course_type") or "theory")
+        marks_by_head = {h: v for h, v in by_course.get(cid, {}).items() if h in weights}
+        if not marks_by_head:
+            continue   # nothing marked yet — not even provisional
+
+        result = grade_course(course, marks_by_head)
+        row = {
+            "course_id":      cid,
+            "course_name":    course.get("course_name"),
+            "course_code":    course.get("course_code"),
+            "course_type":    course.get("course_type") or "theory",
+            "credit_hours":   float(course.get("credit_hours") or 3.0),
+            "semester":       course.get("semester"),
+            "semester_number": course.get("semester_number"),
+            **result,
+        }
+        (graded if result["is_complete"] else incomplete).append(row)
+
+    _persist_course_results(student_id, graded + incomplete)
+
+    def gpa(rows: list) -> tuple[float, float, float]:
+        """Return (gpa, credits_in_denominator, weighted_points)."""
+        counted = [r for r in rows if r["grade"] not in NON_GPA_GRADES]
+        credits = sum(r["credit_hours"] for r in counted)
+        points = sum(r["credit_hours"] * r["grade_points"] for r in counted)
+        return (round(points / credits, 2) if credits > 0 else 0.0, credits, points)
+
+    cgpa, attempted, total_points = gpa(graded)
+
+    semesters = []
+    for sem in sorted({r["semester_number"] for r in graded if r["semester_number"]}):
+        rows = [r for r in graded if r["semester_number"] == sem]
+        sgpa, credits, _ = gpa(rows)
+        semesters.append({"semester_number": sem, "sgpa": sgpa,
+                          "credits": credits, "courses": rows})
+
+    unassigned = [r for r in graded if not r["semester_number"]]
+    if unassigned:
+        sgpa, credits, _ = gpa(unassigned)
+        semesters.append({"semester_number": None, "sgpa": sgpa,
+                          "credits": credits, "courses": unassigned})
+
+    earned = sum(r["credit_hours"] for r in graded if r["grade"] not in NO_CREDIT_GRADES)
+
+    return {
+        "cgpa": cgpa,
+        "total_credits_earned": earned,
+        "total_credits_attempted": attempted,
+        "total_points": round(total_points, 2),
+        "course_count": len(graded),
+        "f_grade_count": sum(1 for r in graded if r["grade"] == "F"),
+        "semesters": semesters,
+        "incomplete_courses": [
+            {"course_id": r["course_id"], "course_name": r["course_name"],
+             "course_code": r["course_code"], "credit_hours": r["credit_hours"],
+             "provisional_pct": r["course_pct"], "heads": r["heads"]}
+            for r in incomplete
+        ],
+        # Legacy alias — some callers still read `total_credits`.
+        "total_credits": earned,
+    }
+
+
+def _empty_cgpa() -> dict:
+    return {
+        "cgpa": 0.0, "total_credits_earned": 0.0, "total_credits_attempted": 0.0,
+        "total_points": 0.0, "course_count": 0, "f_grade_count": 0,
+        "semesters": [], "incomplete_courses": [], "total_credits": 0.0,
+    }
+
+
+def _persist_course_results(student_id: int, rows: list) -> None:
+    if not rows:
+        return
+    try:
+        _supabase.table("course_result").upsert([
+            {
+                "student_id":       student_id,
+                "manual_course_id": r["course_id"],
+                "course_pct":       r["course_pct"],
+                "grade":            r["grade"],
+                "grade_points":     r["grade_points"],
+                "credit_hours":     r["credit_hours"],
+                "semester_number":  r["semester_number"],
+                "is_complete":      r["is_complete"],
+                "computed_at":      datetime.now(timezone.utc).isoformat(),
+            }
+            for r in rows
+        ], on_conflict="student_id,manual_course_id").execute()
+    except Exception:
+        logger.exception("Failed to persist course_result rows for student %s", student_id)
+
+
+def _persist_cgpa(student_id: int, source: str = "exam_marks") -> dict:
+    """Recompute, write back to `student`, and append a history row."""
+    result = _calc_cgpa(student_id)
+
+    # NUMERIC, not int() — int() truncated every 1.5-credit lab to 1.0.
+    _supabase.table("student").update({
+        "cgpa":          result["cgpa"],
+        "total_credits": result["total_credits_earned"],
+    }).eq("student_id", student_id).execute()
+
+    last = (
+        _supabase.table("cgpa_record")
+        .select("cgpa, total_credits")
+        .eq("student_id", student_id)
+        .order("calculated_at", desc=True)
+        .limit(1)
+        .execute()
+    ).data or []
+    # Only append when something actually moved, so the history stays bounded.
+    unchanged = (
+        last
+        and abs(float(last[0].get("cgpa") or 0) - result["cgpa"]) < 0.001
+        and abs(float(last[0].get("total_credits") or 0) - result["total_credits_earned"]) < 0.001
+    )
+    if not unchanged:
+        _supabase.table("cgpa_record").insert({
+            "student_id":    student_id,
+            "cgpa":          result["cgpa"],
+            "total_credits": result["total_credits_earned"],
+            "total_points":  result["total_points"],
+            "exam_count":    result["course_count"],
+            "source":        source,
+        }).execute()
+
+    return result
 
 
 @router.get("/cgpa")
@@ -917,23 +1180,14 @@ async def recalculate_cgpa(authorization: Optional[str] = Header(default=None)):
     profile = _get_profile(user.id)
     student_id = _require_student(profile)
 
-    old = _supabase.table("student").select("cgpa").eq("student_id", student_id).single().execute()
-    prev = float((old.data or {}).get("cgpa") or 0)
+    old = _supabase.table("student").select("cgpa").eq("student_id", student_id).maybe_single().execute()
+    prev = float(((old.data if old else None) or {}).get("cgpa") or 0)
 
-    result = _calc_cgpa(student_id)
+    result = _persist_cgpa(student_id, source="manual")
     new_cgpa = result["cgpa"]
 
-    _supabase.table("student").update({"cgpa": new_cgpa, "total_credits": int(result["total_credits"])}).eq("student_id", student_id).execute()
-    _supabase.table("cgpa_record").insert({
-        "student_id":    student_id,
-        "cgpa":          new_cgpa,
-        "total_credits": result["total_credits"],
-        "total_points":  result["total_points"],
-        "exam_count":    result["exam_count"],
-        "source":        "exam_marks",
-    }).execute()
-
-    return {"new_cgpa": new_cgpa, "previous_cgpa": prev, "changed": abs(new_cgpa - prev) > 0.001, **result}
+    return {"new_cgpa": new_cgpa, "previous_cgpa": prev,
+            "changed": abs(new_cgpa - prev) > 0.001, **result}
 
 
 # ══════════════════════════════════════════════════════════════════════════════

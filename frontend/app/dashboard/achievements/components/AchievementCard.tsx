@@ -47,6 +47,8 @@ export type AchievementCardData = {
   authorDept?: string
   authorAvatar?: string | null
   relativeDate?: string
+  /** Raw ISO created_at — sortable, unlike the localised `relativeDate`. */
+  createdAt?: string
   isOwner?: boolean
   userId?: string
 }

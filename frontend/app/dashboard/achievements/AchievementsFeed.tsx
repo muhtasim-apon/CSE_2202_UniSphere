@@ -57,6 +57,7 @@ function projectToCard(p: Project): AchievementCardData {
     authorAvatar: p.author_avatar_url,
     media: p.media,
     relativeDate: p.created_at ? new Date(p.created_at).toLocaleDateString() : '',
+    createdAt: p.created_at ?? '',
     userId: p.user_id,
   }
 }
@@ -80,6 +81,7 @@ function certToCard(c: Certificate): AchievementCardData {
     authorAvatar: c.author_avatar_url,
     media: c.media,
     relativeDate: c.created_at ? new Date(c.created_at).toLocaleDateString() : '',
+    createdAt: c.created_at ?? '',
     userId: c.user_id,
   }
 }
@@ -100,6 +102,7 @@ function paperToCard(p: ResearchPaper): AchievementCardData {
     authorAvatar: p.author_avatar_url,
     media: p.media,
     relativeDate: p.created_at ? new Date(p.created_at).toLocaleDateString() : '',
+    createdAt: p.created_at ?? '',
     userId: p.user_id,
   }
 }
@@ -112,6 +115,7 @@ export default function AchievementsFeed({ token, currentUserName, currentUserAv
   const [loading, setLoading] = useState(true)
   const [addModal, setAddModal] = useState<'project' | 'certificate' | 'paper' | null>(null)
   const [dropdownOpen, setDropdownOpen] = useState(false)
+  const [error, setError] = useState('')
 
   const load = useCallback(async (t: Tab) => {
     if (!token) return
@@ -127,7 +131,7 @@ export default function AchievementsFeed({ token, currentUserName, currentUserAv
           ...(pr.status === 'fulfilled' ? pr.value.projects.map(projectToCard) : []),
           ...(cr.status === 'fulfilled' ? cr.value.certificates.map(certToCard) : []),
           ...(pa.status === 'fulfilled' ? pa.value.papers.map(paperToCard) : []),
-        ].sort((a, b) => (b.relativeDate ?? '').localeCompare(a.relativeDate ?? ''))
+        ].sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''))
         setCards(mixed)
       } else if (t === 'projects') {
         const { projects } = await getProjects(token)
@@ -139,7 +143,12 @@ export default function AchievementsFeed({ token, currentUserName, currentUserAv
         const { papers } = await getPapers(token)
         setCards(papers.map(paperToCard))
       }
-    } catch {}
+      setError('')
+    } catch (e: unknown) {
+      // Without this a network failure rendered as "No achievements yet".
+      setError(e instanceof Error ? e.message : 'Failed to load achievements.')
+      setCards([])
+    }
     setLoading(false)
   }, [token])
 
@@ -219,6 +228,16 @@ export default function AchievementsFeed({ token, currentUserName, currentUserAv
               <div className="h-6 w-48 animate-pulse rounded bg-border" />
             </div>
           ))}
+        </div>
+      ) : error ? (
+        <div className="rounded-card border border-border bg-card p-10 text-center shadow-[var(--shadow-card)]">
+          <p className="text-sm text-red-500">{error}</p>
+          <button
+            onClick={() => load(tab)}
+            className="mt-4 mx-auto flex items-center gap-2 rounded-xl border border-border px-4 py-2 text-sm font-semibold text-text-muted transition hover:border-primary hover:text-primary"
+          >
+            Try again
+          </button>
         </div>
       ) : cards.length === 0 ? (
         <div className="rounded-card border border-border bg-card p-10 text-center shadow-[var(--shadow-card)]">

@@ -1,5 +1,7 @@
+import logging
 import os
-import random
+import re
+import secrets
 import string
 import uuid as _uuid
 from datetime import datetime, timezone
@@ -12,6 +14,8 @@ from fastapi import APIRouter, File, Form, HTTPException, Header, Query, Request
 from pydantic import BaseModel, Field
 from supabase import create_client
 
+logger = logging.getLogger("unisphere.classes")
+
 FRONTEND_URL = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 
 load_dotenv()
@@ -21,8 +25,15 @@ _supabase = create_client(
     os.environ["SUPABASE_SERVICE_ROLE_KEY"],
 )
 
-_jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "")
+_jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "").strip()
 _jwks_inst: Optional[_PyJWKClient] = None
+
+# The `alg` header is attacker-controlled, so it may only ever select *within* a
+# key family — never across one. Verifying an RS256 token with the HS256 secret
+# path (or vice versa) is the classic algorithm-confusion bypass.
+_SYMMETRIC_ALGS = ["HS256", "HS384", "HS512"]
+_ASYMMETRIC_ALGS = ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"]
+
 
 def _get_jwks_inst() -> _PyJWKClient:
     global _jwks_inst
@@ -41,12 +52,16 @@ async def _auth(authorization: Optional[str]) -> object:
     token = authorization.split(" ", 1)[1].strip()
     try:
         header = pyjwt.get_unverified_header(token)
-        alg = header.get("alg", "HS256")
-        if alg.startswith("HS"):
-            payload = pyjwt.decode(token, _jwt_secret, algorithms=[alg], options={"verify_aud": False})
-        else:
+        alg = header.get("alg", "")
+        if alg in _SYMMETRIC_ALGS:
+            if not _jwt_secret:
+                raise HTTPException(status_code=401, detail="Server not configured for symmetric tokens")
+            payload = pyjwt.decode(token, _jwt_secret, algorithms=_SYMMETRIC_ALGS, options={"verify_aud": False})
+        elif alg in _ASYMMETRIC_ALGS:
             sk = _get_jwks_inst().get_signing_key_from_jwt(token)
-            payload = pyjwt.decode(token, sk.key, algorithms=[alg], options={"verify_aud": False})
+            payload = pyjwt.decode(token, sk.key, algorithms=_ASYMMETRIC_ALGS, options={"verify_aud": False})
+        else:
+            raise HTTPException(status_code=401, detail="Unsupported token algorithm")
         uid = payload.get("sub", "")
         if not uid:
             raise HTTPException(status_code=401, detail="Invalid token")
@@ -83,6 +98,58 @@ def _require_teacher(profile: dict) -> int:
     return iid
 
 
+def _owned_course_or_403(manual_course_id: int, instructor_id: int) -> dict:
+    """Return the course row only if `instructor_id` owns it, else 403/404.
+
+    Every teacher-mutating endpoint must go through this — `_require_teacher`
+    alone only proves the caller is *a* teacher, not that the course is theirs.
+    """
+    course = (
+        _supabase.table("manual_course")
+        .select("*")
+        .eq("manual_course_id", manual_course_id)
+        .maybe_single()
+        .execute()
+    )
+    if not course or not course.data:
+        raise HTTPException(status_code=404, detail="Course not found")
+    if course.data["instructor_id"] != instructor_id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    return course.data
+
+
+def _owned_exam_or_403(exam_id: int, instructor_id: int) -> dict:
+    """Return the exam row only if it belongs to a course `instructor_id` owns."""
+    exam = (
+        _supabase.table("exam")
+        .select("*")
+        .eq("exam_id", exam_id)
+        .maybe_single()
+        .execute()
+    )
+    if not exam or not exam.data:
+        raise HTTPException(status_code=404, detail="Exam not found")
+    course_id = exam.data.get("manual_course_id")
+    if not course_id:
+        raise HTTPException(status_code=403, detail="Not authorized")
+    _owned_course_or_403(course_id, instructor_id)
+    return exam.data
+
+
+def _assert_enrolled(manual_course_id: int, student_id: int) -> None:
+    enrolled = (
+        _supabase.table("manual_enrollment")
+        .select("enrollment_id")
+        .eq("manual_course_id", manual_course_id)
+        .eq("student_id", student_id)
+        .eq("is_active", True)
+        .maybe_single()
+        .execute()
+    )
+    if not enrolled or not enrolled.data:
+        raise HTTPException(status_code=403, detail="Not enrolled in this course")
+
+
 def _require_student(profile: dict) -> int:
     if profile.get("role") != "student":
         raise HTTPException(status_code=403, detail="Student access required")
@@ -92,9 +159,72 @@ def _require_student(profile: dict) -> int:
     return sid
 
 
-# ── GRADE HELPER ──────────────────────────────────────────────────────────────
+# ── CURRICULUM GRADING (DU CSE OBE, §18.4 – §18.10) ──────────────────────────
+#
+# A course is graded ONCE out of 100, assembled from fixed-weight mark heads —
+# not once per exam. See Database/cgpa_curriculum_2026.sql for the rationale.
+
+THEORY_WEIGHTS = {
+    "participation": 5,
+    "class_test":    10,   # best 1 of 2, scaled from 2 CTs of unequal raw marks
+    "assignment":     5,   # group assignment / presentation, scaled to 5
+    "midterm":       20,   # scaled to 20
+    "final":         60,   # scaled to 60
+}
+LAB_WEIGHTS = {
+    "participation": 10,
+    "continuous":    30,
+    "reports":       10,
+    "viva":          20,
+    "capstone":      30,
+}
+
+# Legacy exams predate `mark_head`; fall back to their exam_type.
+EXAM_TYPE_TO_HEAD = {
+    "Midterm":      "midterm",
+    "Final":        "final",
+    "Quiz":         "class_test",
+    "Assignment":   "assignment",
+    "Presentation": "assignment",
+    "Lab":          "continuous",
+    "Viva":         "viva",
+}
+
+# The head whose presence means the course is finished and may enter the CGPA.
+TERMINAL_HEAD = {"theory": "final", "lab": "capstone"}
+
+# Grades excluded from the GPA numerator/denominator entirely (§18.9).
+NON_GPA_GRADES = {"W"}
+# Grades that earn no credit even though they count in the denominator (§18.10).
+NO_CREDIT_GRADES = {"F", "W", "I"}
+
+
+def _weights_for(course_type: str) -> dict:
+    return LAB_WEIGHTS if course_type == "lab" else THEORY_WEIGHTS
+
+
+def _head_of(exam: dict) -> Optional[str]:
+    return exam.get("mark_head") or EXAM_TYPE_TO_HEAD.get(exam.get("exam_type") or "")
+
+
+def _grade_from_pct(pct: float) -> tuple[str, float]:
+    """Curriculum §18.8 letter grade / grade point from a course total out of 100."""
+    if pct >= 80: return ("A+", 4.00)
+    if pct >= 75: return ("A",  3.75)
+    if pct >= 70: return ("A-", 3.50)
+    if pct >= 65: return ("B+", 3.25)
+    if pct >= 60: return ("B",  3.00)
+    if pct >= 55: return ("B-", 2.75)
+    if pct >= 50: return ("C+", 2.50)
+    if pct >= 45: return ("C",  2.25)
+    if pct >= 40: return ("D",  2.00)
+    return ("F", 0.00)
+
 
 def _compute_grade(marks: float, total: float) -> tuple[str, float]:
+    """Single-exam grade. Used for per-exam display only — never for CGPA."""
+    if total <= 0:
+        return ("F", 0.00)
     pct = (marks / total) * 100
     if pct >= 80:  return ("A+", 4.00)
     if pct >= 75:  return ("A",  3.75)
@@ -202,7 +332,10 @@ class AdvisorUpdateRequest(BaseModel):
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _gen_code() -> str:
-    return "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    # secrets, not random — an enrol code grants course access, so it must not
+    # be predictable from other issued codes.
+    alphabet = string.ascii_uppercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(6))
 
 
 @router.post("/manual/create", status_code=201)
@@ -249,13 +382,33 @@ async def join_manual_course(body: JoinCourseRequest, authorization: Optional[st
     if not course or not course.data:
         raise HTTPException(status_code=404, detail="No active course found with that code")
 
-    if _supabase.table("manual_enrollment").select("enrollment_id").eq("manual_course_id", course.data["manual_course_id"]).eq("student_id", student_id).maybe_single().execute().data:
-        raise HTTPException(status_code=409, detail="Already enrolled")
+    course_id = course.data["manual_course_id"]
+    existing = (
+        _supabase.table("manual_enrollment")
+        .select("enrollment_id, is_active")
+        .eq("manual_course_id", course_id)
+        .eq("student_id", student_id)
+        .maybe_single()
+        .execute()
+    )
+    if existing and existing.data:
+        if existing.data["is_active"]:
+            raise HTTPException(status_code=409, detail="Already enrolled")
+        # Reactivate rather than 409 — matches join_by_token, which previously
+        # was the only path that let a removed student rejoin.
+        enrollment = (
+            _supabase.table("manual_enrollment")
+            .update({"is_active": True})
+            .eq("manual_course_id", course_id)
+            .eq("student_id", student_id)
+            .execute()
+        )
+    else:
+        enrollment = _supabase.table("manual_enrollment").insert({
+            "manual_course_id": course_id,
+            "student_id": student_id,
+        }).execute()
 
-    enrollment = _supabase.table("manual_enrollment").insert({
-        "manual_course_id": course.data["manual_course_id"],
-        "student_id": student_id,
-    }).execute()
     return {"enrollment": enrollment.data[0], "course": course.data}
 
 
@@ -300,7 +453,11 @@ async def delete_manual_course(manual_course_id: int, authorization: Optional[st
     if not course.data or course.data["instructor_id"] != instructor_id:
         raise HTTPException(status_code=403, detail="Not authorized")
 
+    # Soft-delete the course AND its enrolments — otherwise the course kept
+    # showing up for students, whose queries filter on enrolment.is_active
+    # rather than course.is_active.
     _supabase.table("manual_course").update({"is_active": False}).eq("manual_course_id", manual_course_id).execute()
+    _supabase.table("manual_enrollment").update({"is_active": False}).eq("manual_course_id", manual_course_id).execute()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -312,6 +469,7 @@ async def create_attendance_session(body: AttendanceSessionCreate, authorization
     user = await _auth(authorization)
     profile = _get_profile(user.id)
     instructor_id = _require_teacher(profile)
+    _owned_course_or_403(body.manual_course_id, instructor_id)
 
     session_res = _supabase.table("attendance_session").insert({
         "manual_course_id": body.manual_course_id,
@@ -341,9 +499,18 @@ async def update_attendance_record(session_id: int, student_id: int, body: Atten
     profile = _get_profile(user.id)
     instructor_id = _require_teacher(profile)
 
-    session = _supabase.table("attendance_session").select("instructor_id").eq("session_id", session_id).single().execute()
-    if not session.data or session.data["instructor_id"] != instructor_id:
+    session = (
+        _supabase.table("attendance_session")
+        .select("instructor_id, manual_course_id")
+        .eq("session_id", session_id)
+        .maybe_single()
+        .execute()
+    )
+    if not session or not session.data:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if session.data["instructor_id"] != instructor_id:
         raise HTTPException(status_code=403, detail="Not authorized")
+    _assert_enrolled(session.data["manual_course_id"], student_id)
 
     res = _supabase.table("attendance_record").upsert({
         "session_id": session_id,
@@ -357,12 +524,32 @@ async def update_attendance_record(session_id: int, student_id: int, body: Atten
 
 @router.get("/attendance/session/{session_id}")
 async def get_attendance_session(session_id: int, authorization: Optional[str] = Header(default=None)):
-    await _auth(authorization)
-    session = _supabase.table("attendance_session").select("*").eq("session_id", session_id).single().execute()
-    if not session.data:
+    user = await _auth(authorization)
+    profile = _get_profile(user.id)
+    session = (
+        _supabase.table("attendance_session")
+        .select("*")
+        .eq("session_id", session_id)
+        .maybe_single()
+        .execute()
+    )
+    if not session or not session.data:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    records = _supabase.table("attendance_record").select("*, student:student(first_name, last_name, student_roll)").eq("session_id", session_id).execute().data or []
+    # The owning teacher sees the full roster; an enrolled student sees only
+    # their own row — never their classmates' attendance.
+    query = _supabase.table("attendance_record").select(
+        "*, student:student(first_name, last_name, student_roll)"
+    ).eq("session_id", session_id)
+
+    if profile.get("role") == "teacher":
+        _owned_course_or_403(session.data["manual_course_id"], _require_teacher(profile))
+    else:
+        student_id = _require_student(profile)
+        _assert_enrolled(session.data["manual_course_id"], student_id)
+        query = query.eq("student_id", student_id)
+
+    records = query.execute().data or []
     total = len(records)
     return {
         "session": session.data,
@@ -619,7 +806,10 @@ async def my_all_marks(authorization: Optional[str] = Header(default=None)):
 async def create_exam(body: ExamCreate, authorization: Optional[str] = Header(default=None)):
     user = await _auth(authorization)
     profile = _get_profile(user.id)
-    _require_teacher(profile)   # teachers only
+    instructor_id = _require_teacher(profile)
+    if body.manual_course_id is None:
+        raise HTTPException(status_code=400, detail="manual_course_id is required")
+    _owned_course_or_403(body.manual_course_id, instructor_id)
     res = _supabase.table("exam").insert({
         "manual_course_id": body.manual_course_id,
         "exam_name":    body.exam_name,
@@ -651,10 +841,32 @@ async def list_exams(
         return {"exams": res.data or []}
 
     student_id = _require_student(profile)
-    query = _supabase.table("exam").select("*").eq("is_published", True)
+
+    # Scope to the student's own enrolments — `is_published` alone would expose
+    # every exam in the system.
     if course_id is not None:
-        query = query.eq("manual_course_id", course_id)
-    exams = query.order("created_at", desc=True).execute().data or []
+        _assert_enrolled(course_id, student_id)
+        enrolled_ids = [course_id]
+    else:
+        enrolments = (
+            _supabase.table("manual_enrollment")
+            .select("manual_course_id")
+            .eq("student_id", student_id)
+            .eq("is_active", True)
+            .execute()
+        )
+        enrolled_ids = [e["manual_course_id"] for e in (enrolments.data or [])]
+        if not enrolled_ids:
+            return {"exams": []}
+
+    exams = (
+        _supabase.table("exam")
+        .select("*")
+        .eq("is_published", True)
+        .in_("manual_course_id", enrolled_ids)
+        .order("created_at", desc=True)
+        .execute()
+    ).data or []
     if exams:
         ids = [e["exam_id"] for e in exams]
         marks = _supabase.table("exam_mark").select("*").eq("student_id", student_id).in_("exam_id", ids).execute().data or []
@@ -668,13 +880,23 @@ async def list_exams(
 async def upsert_mark(exam_id: int, student_id: int, body: SingleMarkRequest, authorization: Optional[str] = Header(default=None)):
     user = await _auth(authorization)
     profile = _get_profile(user.id)
-    _require_teacher(profile)   # teachers only — students cannot enter marks
+    instructor_id = _require_teacher(profile)   # students cannot enter marks
 
-    exam = _supabase.table("exam").select("total_marks").eq("exam_id", exam_id).single().execute()
-    if not exam.data:
-        raise HTTPException(status_code=404, detail="Exam not found")
+    # Must own the course the exam belongs to, and the student must be enrolled
+    # in it — otherwise any teacher could rewrite any student's transcript.
+    exam_row = _owned_exam_or_403(exam_id, instructor_id)
+    _assert_enrolled(exam_row["manual_course_id"], student_id)
 
-    grade, gp = _compute_grade(body.marks_obtained, float(exam.data["total_marks"]))
+    total_marks = float(exam_row["total_marks"])
+    if total_marks <= 0:
+        raise HTTPException(status_code=400, detail="Exam has no positive total marks")
+    if body.marks_obtained > total_marks:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Marks obtained ({body.marks_obtained}) exceeds exam total ({total_marks})",
+        )
+
+    grade, gp = _compute_grade(body.marks_obtained, total_marks)
     res = _supabase.table("exam_mark").upsert({
         "exam_id":        exam_id,
         "student_id":     student_id,
@@ -694,29 +916,17 @@ async def upsert_mark(exam_id: int, student_id: int, body: SingleMarkRequest, au
                 "sender_id":    user.id,
                 "notif_type":   "general",
                 "title":        "Exam mark entered",
-                "body":         f"Your mark: {grade} ({body.marks_obtained}/{exam.data['total_marks']})",
+                "body":         f"Your mark: {grade} ({body.marks_obtained}/{total_marks})",
                 "is_read":      False,
             }).execute()
     except Exception:
-        pass
+        logger.exception("Failed to notify student %s of exam mark", student_id)
 
     # Auto-recalculate CGPA after mark entry
     try:
-        result = _calc_cgpa(student_id)
-        _supabase.table("student").update({
-            "cgpa":          result["cgpa"],
-            "total_credits": int(result["total_credits"]),
-        }).eq("student_id", student_id).execute()
-        _supabase.table("cgpa_record").insert({
-            "student_id":    student_id,
-            "cgpa":          result["cgpa"],
-            "total_credits": result["total_credits"],
-            "total_points":  result["total_points"],
-            "exam_count":    result["exam_count"],
-            "source":        "exam_marks",
-        }).execute()
+        _persist_cgpa(student_id, source="exam_marks")
     except Exception:
-        pass
+        logger.exception("CGPA recalculation failed for student %s", student_id)
 
     return res.data[0]
 
@@ -727,6 +937,7 @@ async def get_exam_marks(exam_id: int, authorization: Optional[str] = Header(def
     profile = _get_profile(user.id)
 
     if profile.get("role") == "teacher":
+        _owned_exam_or_403(exam_id, _require_teacher(profile))
         res = _supabase.table("exam_mark").select("*, student:student(first_name, last_name, student_roll)").eq("exam_id", exam_id).execute()
         return {"marks": res.data or []}
 
@@ -739,35 +950,286 @@ async def get_exam_marks(exam_id: int, authorization: Optional[str] = Header(def
 # CGPA
 # ══════════════════════════════════════════════════════════════════════════════
 
+def grade_course(course: dict, marks_by_head: dict) -> dict:
+    """Grade one course out of 100 from its weighted mark heads (§18.4).
+
+    `marks_by_head` maps a head name to a list of (obtained, total) pairs.
+    Pure function of its arguments — no I/O — so it is directly unit-testable.
+    """
+    course_type = course.get("course_type") or "theory"
+    weights = _weights_for(course_type)
+
+    course_pct = 0.0
+    heads = []
+    for head, weight in weights.items():
+        pairs = [(o, t) for o, t in marks_by_head.get(head, []) if t and t > 0]
+        if not pairs:
+            heads.append({"head": head, "weight": weight, "obtained": None,
+                          "total": None, "contribution": None})
+            continue
+
+        if head == "class_test":
+            # "Class Test (Best 1 of 2)" — the curriculum counts the best score.
+            ratio = max(o / t for o, t in pairs)
+            best = max(pairs, key=lambda p: p[0] / p[1])
+            obtained, total = best
+        else:
+            obtained = sum(o for o, _ in pairs)
+            total = sum(t for _, t in pairs)
+            ratio = obtained / total
+
+        ratio = min(max(ratio, 0.0), 1.0)
+        contribution = ratio * weight
+        course_pct += contribution
+        heads.append({"head": head, "weight": weight,
+                      "obtained": round(obtained, 2), "total": round(total, 2),
+                      "contribution": round(contribution, 2)})
+
+    course_pct = round(min(course_pct, 100.0), 2)
+
+    # A course only enters the CGPA once its terminal head (Final for theory,
+    # Capstone for lab) has been marked — a half-graded course would otherwise
+    # look like a fail.
+    terminal = TERMINAL_HEAD.get(course_type, "final")
+    is_complete = bool(marks_by_head.get(terminal))
+
+    grade, gp = _grade_from_pct(course_pct)
+    return {
+        "course_pct":   course_pct,
+        "grade":        grade,
+        "grade_points": gp,
+        "is_complete":  is_complete,
+        "heads":        heads,
+    }
+
+
 def _calc_cgpa(student_id: int) -> dict:
-    marks = (
-        _supabase.table("exam_mark")
-        .select("*, exam:exam(exam_name, exam_type, total_marks, credit_hours, manual_course_id, manual_course:manual_course(course_name, course_code, semester_number))")
+    """Per-course, curriculum-weighted CGPA/SGPA (§18.4 – §18.10).
+
+    One grade per COURSE weighted by that course's credit_hours — not one grade
+    per exam, which is what this used to do and which inflated both cgpa and
+    total_credits by roughly the number of exams per course.
+    """
+    enrolments = (
+        _supabase.table("manual_enrollment")
+        .select(
+            "manual_course_id, "
+            "course:manual_course(manual_course_id, course_name, course_code, "
+            "credit_hours, course_type, semester, semester_number)"
+        )
         .eq("student_id", student_id)
-        .execute().data or []
-    )
-    weighted, credits = 0.0, 0.0
-    breakdown = []
+        .eq("is_active", True)
+        .execute()
+    ).data or []
+
+    courses = {e["manual_course_id"]: e["course"] for e in enrolments if e.get("course")}
+    if not courses:
+        return _empty_cgpa()
+
+    course_ids = list(courses)
+    exams = (
+        _supabase.table("exam")
+        .select("exam_id, exam_name, exam_type, mark_head, total_marks, manual_course_id")
+        .in_("manual_course_id", course_ids)
+        .execute()
+    ).data or []
+    exams_by_id = {e["exam_id"]: e for e in exams}
+
+    marks = []
+    if exams_by_id:
+        marks = (
+            _supabase.table("exam_mark")
+            .select("exam_id, marks_obtained")
+            .eq("student_id", student_id)
+            .in_("exam_id", list(exams_by_id))
+            .execute()
+        ).data or []
+
+    # course_id → head → [(obtained, total)]
+    by_course: dict = {cid: {} for cid in course_ids}
     for m in marks:
-        exam = m.get("exam") or {}
-        mc   = (exam.get("manual_course") or {})
-        gp, ch = m.get("grade_points"), exam.get("credit_hours")
-        if gp is not None and ch is not None:
-            weighted += float(gp) * float(ch)
-            credits  += float(ch)
-        breakdown.append({
-            "exam_name":     exam.get("exam_name"),
-            "exam_type":     exam.get("exam_type"),
-            "grade":         m.get("grade"),
-            "grade_points":  m.get("grade_points"),
-            "credit_hours":  ch,
-            "marks_obtained":m.get("marks_obtained"),
-            "total_marks":   exam.get("total_marks"),
-            "course_name":   mc.get("course_name"),
-            "course_code":   mc.get("course_code"),
-        })
-    cgpa = round(weighted / credits, 2) if credits > 0 else 0.0
-    return {"cgpa": cgpa, "total_credits": credits, "total_points": weighted, "exam_count": len(marks), "breakdown": breakdown}
+        exam = exams_by_id.get(m["exam_id"])
+        if not exam:
+            continue
+        head = _head_of(exam)
+        if not head:
+            continue   # untagged legacy exam — cannot be weighted, so skipped
+        by_course.setdefault(exam["manual_course_id"], {}).setdefault(head, []).append(
+            (float(m["marks_obtained"]), float(exam["total_marks"]))
+        )
+
+    # Class Participation is derived from attendance records (curriculum §18.4):
+    # 5 marks for theory, 10 marks for lab. The student's attendance % is the
+    # percentage of sessions where they were Present or Late. We synthesise a
+    # single (obtained, total) pair so the existing grade_course math applies
+    # uniformly: contribution = (pct/100) × weight.
+    if course_ids:
+        attendance_rows = (
+            _supabase.table("attendance_record")
+            .select(
+                "status,"
+                "session:attendance_session!inner(manual_course_id)"
+            )
+            .eq("student_id", student_id)
+            .in_("session.manual_course_id", course_ids)
+            .execute()
+        ).data or []
+
+        attn_by_course: dict = {}
+        for r in attendance_rows:
+            sess = r.get("session") or {}
+            cid = sess.get("manual_course_id")
+            if not cid:
+                continue
+            bucket = attn_by_course.setdefault(cid, {"present": 0, "late": 0, "total": 0})
+            bucket["total"] += 1
+            if r["status"] == "Present":
+                bucket["present"] += 1
+            elif r["status"] == "Late":
+                bucket["late"] += 1
+
+        for cid, bucket in attn_by_course.items():
+            if not bucket["total"]:
+                continue
+            attended = bucket["present"] + bucket["late"]
+            pct = round((attended / bucket["total"]) * 100, 2)
+            # Inject only if the course actually weights participation (both
+            # theory and lab do, but be defensive in case weights change).
+            if "participation" in _weights_for((courses.get(cid) or {}).get("course_type") or "theory"):
+                by_course.setdefault(cid, {}).setdefault("participation", []).append(
+                    (pct, 100.0)
+                )
+
+    graded, incomplete = [], []
+    for cid, course in courses.items():
+        weights = _weights_for(course.get("course_type") or "theory")
+        marks_by_head = {h: v for h, v in by_course.get(cid, {}).items() if h in weights}
+        if not marks_by_head:
+            continue   # nothing marked yet — not even provisional
+
+        result = grade_course(course, marks_by_head)
+        row = {
+            "course_id":      cid,
+            "course_name":    course.get("course_name"),
+            "course_code":    course.get("course_code"),
+            "course_type":    course.get("course_type") or "theory",
+            "credit_hours":   float(course.get("credit_hours") or 3.0),
+            "semester":       course.get("semester"),
+            "semester_number": course.get("semester_number"),
+            **result,
+        }
+        (graded if result["is_complete"] else incomplete).append(row)
+
+    _persist_course_results(student_id, graded + incomplete)
+
+    def gpa(rows: list) -> tuple[float, float, float]:
+        """Return (gpa, credits_in_denominator, weighted_points)."""
+        counted = [r for r in rows if r["grade"] not in NON_GPA_GRADES]
+        credits = sum(r["credit_hours"] for r in counted)
+        points = sum(r["credit_hours"] * r["grade_points"] for r in counted)
+        return (round(points / credits, 2) if credits > 0 else 0.0, credits, points)
+
+    cgpa, attempted, total_points = gpa(graded)
+
+    semesters = []
+    for sem in sorted({r["semester_number"] for r in graded if r["semester_number"]}):
+        rows = [r for r in graded if r["semester_number"] == sem]
+        sgpa, credits, _ = gpa(rows)
+        semesters.append({"semester_number": sem, "sgpa": sgpa,
+                          "credits": credits, "courses": rows})
+
+    unassigned = [r for r in graded if not r["semester_number"]]
+    if unassigned:
+        sgpa, credits, _ = gpa(unassigned)
+        semesters.append({"semester_number": None, "sgpa": sgpa,
+                          "credits": credits, "courses": unassigned})
+
+    earned = sum(r["credit_hours"] for r in graded if r["grade"] not in NO_CREDIT_GRADES)
+
+    return {
+        "cgpa": cgpa,
+        "total_credits_earned": earned,
+        "total_credits_attempted": attempted,
+        "total_points": round(total_points, 2),
+        "course_count": len(graded),
+        "f_grade_count": sum(1 for r in graded if r["grade"] == "F"),
+        "semesters": semesters,
+        "incomplete_courses": [
+            {"course_id": r["course_id"], "course_name": r["course_name"],
+             "course_code": r["course_code"], "credit_hours": r["credit_hours"],
+             "provisional_pct": r["course_pct"], "heads": r["heads"]}
+            for r in incomplete
+        ],
+        # Legacy alias — some callers still read `total_credits`.
+        "total_credits": earned,
+    }
+
+
+def _empty_cgpa() -> dict:
+    return {
+        "cgpa": 0.0, "total_credits_earned": 0.0, "total_credits_attempted": 0.0,
+        "total_points": 0.0, "course_count": 0, "f_grade_count": 0,
+        "semesters": [], "incomplete_courses": [], "total_credits": 0.0,
+    }
+
+
+def _persist_course_results(student_id: int, rows: list) -> None:
+    if not rows:
+        return
+    try:
+        _supabase.table("course_result").upsert([
+            {
+                "student_id":       student_id,
+                "manual_course_id": r["course_id"],
+                "course_pct":       r["course_pct"],
+                "grade":            r["grade"],
+                "grade_points":     r["grade_points"],
+                "credit_hours":     r["credit_hours"],
+                "semester_number":  r["semester_number"],
+                "is_complete":      r["is_complete"],
+                "computed_at":      datetime.now(timezone.utc).isoformat(),
+            }
+            for r in rows
+        ], on_conflict="student_id,manual_course_id").execute()
+    except Exception:
+        logger.exception("Failed to persist course_result rows for student %s", student_id)
+
+
+def _persist_cgpa(student_id: int, source: str = "exam_marks") -> dict:
+    """Recompute, write back to `student`, and append a history row."""
+    result = _calc_cgpa(student_id)
+
+    # NUMERIC, not int() — int() truncated every 1.5-credit lab to 1.0.
+    _supabase.table("student").update({
+        "cgpa":          result["cgpa"],
+        "total_credits": result["total_credits_earned"],
+    }).eq("student_id", student_id).execute()
+
+    last = (
+        _supabase.table("cgpa_record")
+        .select("cgpa, total_credits")
+        .eq("student_id", student_id)
+        .order("calculated_at", desc=True)
+        .limit(1)
+        .execute()
+    ).data or []
+    # Only append when something actually moved, so the history stays bounded.
+    unchanged = (
+        last
+        and abs(float(last[0].get("cgpa") or 0) - result["cgpa"]) < 0.001
+        and abs(float(last[0].get("total_credits") or 0) - result["total_credits_earned"]) < 0.001
+    )
+    if not unchanged:
+        _supabase.table("cgpa_record").insert({
+            "student_id":    student_id,
+            "cgpa":          result["cgpa"],
+            "total_credits": result["total_credits_earned"],
+            "total_points":  result["total_points"],
+            "exam_count":    result["course_count"],
+            "source":        source,
+        }).execute()
+
+    return result
 
 
 @router.get("/cgpa")
@@ -784,23 +1246,14 @@ async def recalculate_cgpa(authorization: Optional[str] = Header(default=None)):
     profile = _get_profile(user.id)
     student_id = _require_student(profile)
 
-    old = _supabase.table("student").select("cgpa").eq("student_id", student_id).single().execute()
-    prev = float((old.data or {}).get("cgpa") or 0)
+    old = _supabase.table("student").select("cgpa").eq("student_id", student_id).maybe_single().execute()
+    prev = float(((old.data if old else None) or {}).get("cgpa") or 0)
 
-    result = _calc_cgpa(student_id)
+    result = _persist_cgpa(student_id, source="manual")
     new_cgpa = result["cgpa"]
 
-    _supabase.table("student").update({"cgpa": new_cgpa, "total_credits": int(result["total_credits"])}).eq("student_id", student_id).execute()
-    _supabase.table("cgpa_record").insert({
-        "student_id":    student_id,
-        "cgpa":          new_cgpa,
-        "total_credits": result["total_credits"],
-        "total_points":  result["total_points"],
-        "exam_count":    result["exam_count"],
-        "source":        "exam_marks",
-    }).execute()
-
-    return {"new_cgpa": new_cgpa, "previous_cgpa": prev, "changed": abs(new_cgpa - prev) > 0.001, **result}
+    return {"new_cgpa": new_cgpa, "previous_cgpa": prev,
+            "changed": abs(new_cgpa - prev) > 0.001, **result}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -921,17 +1374,29 @@ def _assert_course_owner(manual_course_id: int, instructor_id: int) -> dict:
 
 @router.get("/manual/{course_id}")
 async def get_course_detail(course_id: int, authorization: Optional[str] = Header(default=None)):
-    await _auth(authorization)
+    user = await _auth(authorization)
+    profile = _get_profile(user.id)
     course = (
         _supabase.table("manual_course")
         .select("*, instructor:instructor(first_name, last_name, employee_id, designation)")
         .eq("manual_course_id", course_id)
         .eq("is_active", True)
-        .single()
+        .maybe_single()
         .execute()
     )
-    if not course.data:
+    if not course or not course.data:
         raise HTTPException(status_code=404, detail="Course not found")
+
+    # Only the owning teacher may see the course; anyone else enumerating ids
+    # would otherwise harvest join_link_token and self-enrol into any course.
+    is_owner = (
+        profile.get("role") == "teacher"
+        and profile.get("instructor_id") == course.data["instructor_id"]
+    )
+    if not is_owner:
+        if profile.get("role") == "teacher":
+            raise HTTPException(status_code=403, detail="Not authorized")
+        _assert_enrolled(course_id, _require_student(profile))
 
     enrollment_count = (
         _supabase.table("manual_enrollment")
@@ -949,13 +1414,18 @@ async def get_course_detail(course_id: int, authorization: Optional[str] = Heade
         .execute()
     ).count or 0
 
-    token = course.data.get("join_link_token", "")
-    return {
-        "course": course.data,
+    # The share link is a credential — it is only ever returned to the owner.
+    data = dict(course.data)
+    token = data.pop("join_link_token", "")
+    payload = {
+        "course": data,
         "enrollment_count": enrollment_count,
         "resource_count": resource_count,
-        "join_link": f"{FRONTEND_URL}/dashboard/classes?join={token}",
     }
+    if is_owner:
+        payload["course"]["join_link_token"] = token
+        payload["join_link"] = f"{FRONTEND_URL}/dashboard/classes?join={token}"
+    return payload
 
 
 # ── B. STUDENT MANAGEMENT ─────────────────────────────────────────────────────
@@ -978,16 +1448,27 @@ async def list_course_students_with_email(
         .execute()
     )
 
+    rows = enrollments.data or []
+
+    # One read for the whole roster via v_profile_email, instead of an
+    # auth.admin.get_user_by_id() round trip per student.
+    profile_ids = [s["profile_id"] for e in rows if (s := e.get("student") or {}).get("profile_id")]
+    emails: dict = {}
+    if profile_ids:
+        try:
+            found = (
+                _supabase.table("v_profile_email").select("id, email").in_("id", profile_ids).execute()
+            ).data or []
+            emails = {p["id"]: p.get("email") or "" for p in found}
+        except Exception:
+            # The view ships in Database/cgpa_curriculum_2026.sql; if it hasn't
+            # been applied yet the roster is still useful without emails.
+            logger.exception("Could not batch-load emails for course %s", course_id)
+
     students = []
-    for e in (enrollments.data or []):
+    for e in rows:
         s = e.get("student") or {}
-        pid = s.get("profile_id")
-        email = ""
-        if pid:
-            p = _supabase.table("profiles").select("id").eq("id", pid).maybe_single().execute()
-            if p and p.data:
-                auth_user = _supabase.auth.admin.get_user_by_id(pid)
-                email = (auth_user.user.email or "") if auth_user and auth_user.user else ""
+        email = emails.get(s.get("profile_id"), "")
         students.append({
             "enrollment_id": e["enrollment_id"],
             "enrolled_at": e["enrolled_at"],
@@ -1019,9 +1500,14 @@ async def list_all_students(
         .eq("is_active", True)
     )
     if q:
-        query = query.or_(
-            f"first_name.ilike.%{q}%,last_name.ilike.%{q}%,student_roll.ilike.%{q}%"
-        )
+        # PostgREST parses `or_` as a comma/parenthesis-delimited expression, so
+        # raw user input here is filter injection. Strip the delimiters and the
+        # LIKE wildcards rather than interpolating blind.
+        safe_q = re.sub(r'[,()*%_\\."\']', "", q).strip()[:60]
+        if safe_q:
+            query = query.or_(
+                f"first_name.ilike.%{safe_q}%,last_name.ilike.%{safe_q}%,student_roll.ilike.%{safe_q}%"
+            )
 
     res = query.range(offset, offset + limit - 1).execute()
     students = res.data or []
@@ -1298,7 +1784,10 @@ async def dismiss_invite(invite_id: int, authorization: Optional[str] = Header(d
 
 # ── E. RESOURCE ENDPOINTS ─────────────────────────────────────────────────────
 
-MAX_RESOURCE_BYTES = 2_147_483_648  # 2 GB
+# Must match the bucket's file_size_limit in main.py's lifespan hook — the two
+# used to disagree (2 GB here, 50 MB in the bucket created on the upload path).
+# The whole body is read into memory, so this is also a memory ceiling.
+MAX_RESOURCE_BYTES = 52_428_800  # 50 MB
 
 
 @router.post("/manual/{course_id}/resources/upload", status_code=201)
@@ -1322,13 +1811,15 @@ async def upload_resource(
 
     if file and file.filename:
         # Check Content-Length before reading
+        limit_mb = MAX_RESOURCE_BYTES // 1_048_576
         cl = request.headers.get("content-length")
-        if cl and int(cl) > MAX_RESOURCE_BYTES:
-            raise HTTPException(status_code=413, detail="File exceeds 2 GB limit")
+        if cl and cl.isdigit() and int(cl) > MAX_RESOURCE_BYTES:
+            raise HTTPException(status_code=413, detail=f"File exceeds the {limit_mb} MB limit")
 
+        # Content-Length is client-supplied, so the real check is on the bytes.
         content = await file.read()
         if len(content) > MAX_RESOURCE_BYTES:
-            raise HTTPException(status_code=413, detail="File exceeds 2 GB limit")
+            raise HTTPException(status_code=413, detail=f"File exceeds the {limit_mb} MB limit")
 
         ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
         mime = file.content_type or "application/octet-stream"
@@ -1338,15 +1829,8 @@ async def upload_resource(
         safe_name = file.filename.replace(" ", "_").replace("(", "").replace(")", "")
         storage_path = f"{course_id}/{_uuid.uuid4()}/{safe_name}"
 
-        # Ensure bucket exists (lifespan creation may have silently failed)
-        try:
-            _supabase.storage.create_bucket(
-                "class-resources",
-                options={"public": True, "file_size_limit": 52428800},
-            )
-        except Exception:
-            pass  # already exists — that's fine
-
+        # The bucket is created once in main.py's lifespan hook; doing it here
+        # cost a round trip on every single upload.
         _supabase.storage.from_("class-resources").upload(
             storage_path, content, {"content-type": mime}
         )
@@ -1389,32 +1873,23 @@ async def get_course_resources(course_id: int, authorization: Optional[str] = He
     profile = _get_profile(user.id)
 
     # Verify access: teacher owns course OR student is enrolled
+    is_owner = False
     if profile.get("role") == "teacher":
-        instructor_id = _require_teacher(profile)
-        _assert_course_owner(course_id, instructor_id)
+        _owned_course_or_403(course_id, _require_teacher(profile))
+        is_owner = True
     else:
-        student_id = _require_student(profile)
-        enrolled = (
-            _supabase.table("manual_enrollment")
-            .select("enrollment_id")
-            .eq("manual_course_id", course_id)
-            .eq("student_id", student_id)
-            .eq("is_active", True)
-            .maybe_single()
-            .execute()
-        )
-        if not enrolled or not enrolled.data:
-            raise HTTPException(status_code=403, detail="Not enrolled in this course")
+        _assert_enrolled(course_id, _require_student(profile))
 
-    res = (
+    query = (
         _supabase.table("course_resource")
         .select("*")
         .eq("manual_course_id", course_id)
-        .eq("is_published", True)
-        .order("sort_order", desc=False)
-        .order("uploaded_at", desc=True)
-        .execute()
     )
+    # The owning teacher needs to see their drafts in order to publish them.
+    if not is_owner:
+        query = query.eq("is_published", True)
+
+    res = query.order("sort_order", desc=False).order("uploaded_at", desc=True).execute()
     return {"resources": res.data or []}
 
 
@@ -1434,16 +1909,21 @@ async def delete_resource(
         .select("storage_path")
         .eq("resource_id", resource_id)
         .eq("manual_course_id", course_id)
-        .single()
+        .maybe_single()
         .execute()
     )
-    if resource.data and resource.data.get("storage_path"):
+    if not resource or not resource.data:
+        raise HTTPException(status_code=404, detail="Resource not found")
+
+    if resource.data.get("storage_path"):
         try:
             _supabase.storage.from_("class-resources").remove([resource.data["storage_path"]])
         except Exception:
-            pass
+            logger.exception("Failed to remove class resource %s from storage", resource_id)
 
-    _supabase.table("course_resource").delete().eq("resource_id", resource_id).execute()
+    _supabase.table("course_resource").delete().eq("resource_id", resource_id).eq(
+        "manual_course_id", course_id
+    ).execute()
 
 
 @router.patch("/manual/{course_id}/resources/{resource_id}")
@@ -1458,6 +1938,12 @@ async def update_resource(
     instructor_id = _require_teacher(profile)
     _assert_course_owner(course_id, instructor_id)
 
-    update_data = {k: v for k, v in body.model_dump().items() if v is not None}
+    # exclude_unset so is_published=False and empty descriptions actually apply
+    update_data = body.model_dump(exclude_unset=True)
+    if not update_data:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
     res = _supabase.table("course_resource").update(update_data).eq("resource_id", resource_id).eq("manual_course_id", course_id).execute()
+    if not res.data:
+        raise HTTPException(status_code=404, detail="Resource not found")
     return res.data[0]

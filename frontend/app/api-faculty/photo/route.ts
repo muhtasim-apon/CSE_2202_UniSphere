@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 
 export const revalidate = 86400 // cache 24 h
 
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024 // 8 MB — a headshot is far smaller
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const imageUrl = searchParams.get('url')
@@ -25,6 +27,13 @@ export async function GET(request: Request) {
     return new NextResponse('Forbidden host', { status: 403 })
   }
 
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    return new NextResponse('Unsupported protocol', { status: 400 })
+  }
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 8000)
+
   try {
     const res = await fetch(imageUrl, {
       headers: {
@@ -33,8 +42,16 @@ export async function GET(request: Request) {
         Referer: 'https://www.du.ac.bd/',
         Accept: 'image/webp,image/apng,image/*,*/*;q=0.8',
       },
+      // Do not follow redirects: an allowlisted DU URL could otherwise bounce
+      // to an arbitrary (or internal) host and we would proxy that instead.
+      redirect: 'manual',
+      signal: controller.signal,
       next: { revalidate: 86400 },
     })
+
+    if (res.status >= 300 && res.status < 400) {
+      return new NextResponse('Refusing to follow redirect', { status: 502 })
+    }
 
     if (!res.ok) {
       console.warn(`Image proxy failed to fetch ${imageUrl}: HTTP ${res.status}`)
@@ -47,7 +64,15 @@ export async function GET(request: Request) {
       return new NextResponse('Not an image', { status: 400 })
     }
 
+    // Cap the body — arrayBuffer() on an unbounded response is a memory DoS.
+    const declared = Number(res.headers.get('Content-Length') ?? '0')
+    if (declared > MAX_IMAGE_BYTES) {
+      return new NextResponse('Image too large', { status: 413 })
+    }
     const buffer = await res.arrayBuffer()
+    if (buffer.byteLength > MAX_IMAGE_BYTES) {
+      return new NextResponse('Image too large', { status: 413 })
+    }
 
     return new NextResponse(buffer, {
       status: 200,
@@ -60,5 +85,7 @@ export async function GET(request: Request) {
   } catch (error) {
     console.error(`Image proxy error fetching ${imageUrl}:`, error)
     return new NextResponse('Proxy error', { status: 502 })
+  } finally {
+    clearTimeout(timer)
   }
 }

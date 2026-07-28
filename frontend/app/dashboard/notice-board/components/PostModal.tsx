@@ -127,7 +127,9 @@ export default function PostModal({ open, onClose, token, userRole, editData, on
             question: pollQuestion.trim(),
             options: validOptions,
             is_multiple: isMultiple,
-            ends_at: pollEndsAt || undefined,
+            // `datetime-local` has no zone; send an explicit offset so the
+            // deadline isn't read as UTC (6 hours early in Bangladesh).
+            ends_at: pollEndsAt ? new Date(pollEndsAt).toISOString() : undefined,
           }, token)
           notice = { ...notice, has_poll: true }
         }
@@ -153,7 +155,9 @@ export default function PostModal({ open, onClose, token, userRole, editData, on
         })
       }
 
-      onSuccess({ ...notice, attachment_count: notice.attachment_count + uploadedCount })
+      // A freshly created notice has no attachment_count yet, so the bare sum
+      // produced NaN and the card then skipped fetching its attachments.
+      onSuccess({ ...notice, attachment_count: (notice.attachment_count ?? 0) + uploadedCount })
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to post. Please try again.')
     } finally {

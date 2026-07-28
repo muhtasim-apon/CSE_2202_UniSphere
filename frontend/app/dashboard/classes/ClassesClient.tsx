@@ -72,7 +72,10 @@ export default function ClassesClient({ userId, role }: Props) {
     const jt = params.get('join')
     if (jt) {
       setJoinToken(jt)
-      window.history.replaceState({}, '', '/dashboard/classes')
+      // Drop only the `join` param — keep the path and any other query state.
+      params.delete('join')
+      const rest = params.toString()
+      window.history.replaceState({}, '', window.location.pathname + (rest ? `?${rest}` : ''))
       setJoinLoading(true)
       getCourseByJoinToken(token, jt)
         .then(data => setJoinPreview(data as JoinCoursePreview))
@@ -198,7 +201,7 @@ export default function ClassesClient({ userId, role }: Props) {
 
       <AnimatePresence mode="wait">
         <motion.div
-          key={`${activeTab}-${coursesKey}`}
+          key={activeTab}
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -8 }}

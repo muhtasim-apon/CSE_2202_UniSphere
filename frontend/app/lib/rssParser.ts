@@ -7,13 +7,15 @@ export interface RssItem {
 }
 
 export function parseRssXml(xml: string, defaultAuthor: string): RssItem[] {
-  const itemRegex = /<item>([\s\S]*?)<\/item>/g
+  // RSS uses <item>; Atom uses <entry>. Accept either so Atom-only feeds don't
+  // silently yield nothing.
+  const itemRegex = /<(item|entry)(?:\s[^>]*)?>([\s\S]*?)<\/\1>/g
   const items: RssItem[] = []
   let match
   while ((match = itemRegex.exec(xml)) !== null) {
-    const block = match[1]
+    const block = match[2]
     items.push({
-      title: extractTag(block, 'title'),
+      title: decodeEntities(extractTag(block, 'title')),
       link: extractLinkFromBlock(block),
       description: stripHtml(extractTag(block, 'description')),
       pubDate: extractTag(block, 'pubDate'),
@@ -42,14 +44,31 @@ export function extractTag(xml: string, tag: string): string {
   return (m?.[1] ?? m?.[2] ?? '').trim()
 }
 
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&', lt: '<', gt: '>', quot: '"', apos: "'",
+  nbsp: ' ', ndash: '–', mdash: '—', hellip: '…',
+  lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”',
+}
+
+export function decodeEntities(text: string): string {
+  return text.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (whole, body: string) => {
+    if (body[0] === '#') {
+      const code = body[1] === 'x' || body[1] === 'X'
+        ? parseInt(body.slice(2), 16)
+        : parseInt(body.slice(1), 10)
+      return Number.isFinite(code) && code > 0 && code <= 0x10ffff
+        ? String.fromCodePoint(code)
+        : whole
+    }
+    return NAMED_ENTITIES[body.toLowerCase()] ?? whole
+  })
+}
+
 export function stripHtml(html: string): string {
-  return html
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+  // Strip tags FIRST, then decode. Decoding first would turn `&lt;b&gt;` into a
+  // real tag; decoding after the strip (as this used to) left `&lt;script&gt;`
+  // as literal `<script>` text and never handled numeric entities at all.
+  return decodeEntities(html.replace(/<[^>]+>/g, ' '))
     .replace(/\s+/g, ' ')
     .trim()
 }
